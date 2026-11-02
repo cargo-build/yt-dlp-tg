@@ -1,6 +1,10 @@
 //! Typed Telegram delivery and durable reuse of successful uploads. @req DL-4 DL-9
 
-use std::{future::Future, path::Path, time::{Duration, Instant}};
+use std::{
+    future::Future,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use futures_util::future::{Either, select};
 
@@ -52,13 +56,20 @@ pub async fn deliver(
             ));
         }
         let feedback = Progress::cached();
-        match tracked(bot, request.chat, request.status, request.language, &feedback, send_typed(
+        match tracked(
             bot,
             request.chat,
-            &cached.kind,
-            InputFile::file_id(FileId(cached.file_id)),
-            &request.media.title,
-        ))
+            request.status,
+            request.language,
+            &feedback,
+            send_typed(
+                bot,
+                request.chat,
+                &cached.kind,
+                InputFile::file_id(FileId(cached.file_id)),
+                &request.media.title,
+            ),
+        )
         .await
         {
             Ok(_) => {
@@ -84,8 +95,15 @@ pub async fn deliver(
         compio::fs::create_dir_all(&config.download_dir).await?;
         compio::fs::create_dir(&directory).await?;
         let observe = |line: &[u8]| feedback.observe(line);
-        let path = tracked(bot, request.chat, request.status, request.language, &feedback,
-            media::download(config, request.media, &request.format, &directory, &observe)).await?;
+        let path = tracked(
+            bot,
+            request.chat,
+            request.status,
+            request.language,
+            &feedback,
+            media::download(config, request.media, &request.format, &directory, &observe),
+        )
+        .await?;
         feedback.download_finished();
         let size = compio::fs::metadata(&path).await?.len();
         if size > config.max_upload_bytes {
@@ -93,12 +111,21 @@ pub async fn deliver(
         }
         let (kind, extension) = upload_kind(&request.format, &path)?;
         feedback.sending(Some(size));
-        let file = InputFile::read(upload::counted(compio::fs::File::open(&path).await?, feedback.clone()))
-            .file_name(upload_name(&request.media.title, extension));
-        let sent = tracked(bot, request.chat, request.status, request.language, &feedback,
-            send_typed(bot, request.chat, &kind, file, &request.media.title))
-            .await
-            .map_err(|_| Error::Telegram("media upload failed".into()))?;
+        let file = InputFile::read(upload::counted(
+            compio::fs::File::open(&path).await?,
+            feedback.clone(),
+        ))
+        .file_name(upload_name(&request.media.title, extension));
+        let sent = tracked(
+            bot,
+            request.chat,
+            request.status,
+            request.language,
+            &feedback,
+            send_typed(bot, request.chat, &kind, file, &request.media.title),
+        )
+        .await
+        .map_err(|_| Error::Telegram("media upload failed".into()))?;
         let cached = response_file(&sent, kind)?;
         let kind = cached.kind.clone();
         cache.put(key, cached).await?;
@@ -152,23 +179,32 @@ async fn tracked<F: Future>(
         }
         next = Instant::now() + Duration::from_millis(3500);
         let text = feedback.render(language);
-        if previous.as_ref() == Some(&text) { continue; }
+        if previous.as_ref() == Some(&text) {
+            continue;
+        }
         previous = Some(text.clone());
         let edit = async {
             compio::time::timeout(Duration::from_secs(2), async {
                 bot.edit_message_text(chat, status, text)
-                    .reply_markup(InlineKeyboardMarkup::default()).await
-            }).await.is_ok_and(|result| result.is_ok())
+                    .reply_markup(InlineKeyboardMarkup::default())
+                    .await
+            })
+            .await
+            .is_ok_and(|result| result.is_ok())
         };
         let edit = std::pin::pin!(edit);
         let succeeded = match select(work.as_mut(), edit).await {
             Either::Left((output, edit)) => {
-                if !edit.await && feedback.warn_once() { tracing::warn!("Cannot update media progress"); }
+                if !edit.await && feedback.warn_once() {
+                    tracing::warn!("Cannot update media progress");
+                }
                 return output;
             }
             Either::Right((succeeded, _)) => succeeded,
         };
-        if !succeeded && feedback.warn_once() { tracing::warn!("Cannot update media progress"); }
+        if !succeeded && feedback.warn_once() {
+            tracing::warn!("Cannot update media progress");
+        }
     }
 }
 

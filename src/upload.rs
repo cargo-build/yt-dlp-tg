@@ -22,7 +22,10 @@ struct Counted {
 impl AsyncRead for Counted {
     async fn read<B: IoBufMut>(&mut self, buffer: B) -> BufResult<usize, B> {
         let BufResult(result, buffer) = self.reader.read(buffer).await;
-        BufResult(result.inspect(|bytes| self.progress.uploaded(*bytes)), buffer)
+        BufResult(
+            result.inspect(|bytes| self.progress.uploaded(*bytes)),
+            buffer,
+        )
     }
 }
 

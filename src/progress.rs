@@ -126,9 +126,10 @@ impl Progress {
             DownloadPhase::Active => {}
             DownloadPhase::Complete | DownloadPhase::Cached => return,
         }
+        let has_room = download.streams.len() < MAX_STREAMS;
         match download.streams.get_mut(frame.id) {
             Some(stream) => stream.observe(frame),
-            None if download.streams.len() < MAX_STREAMS => {
+            None if has_room => {
                 let mut stream = Stream::default();
                 let id = frame.id.to_vec();
                 stream.observe(frame);
@@ -266,10 +267,7 @@ impl Download {
 
 impl Stream {
     fn observe(&mut self, frame: Frame<'_>) {
-        match self.finished {
-            true => return,
-            false => {}
-        }
+        if self.finished { return; }
         self.total = match (self.total, frame.total) {
             (Some(Size::Exact(total)), Some(Size::Estimated(_)) | None) => Some(Size::Exact(total)),
             (_, Some(total)) => Some(total),
@@ -290,21 +288,15 @@ impl Stream {
 }
 
 fn parse_frame(line: &[u8]) -> Option<Frame<'_>> {
-    match line.len() > MAX_FRAME_LENGTH {
-        true => return None,
-        false => {}
-    }
+    if line.len() > MAX_FRAME_LENGTH { return None; }
     let mut fields = line.strip_prefix(FRAME_PREFIX)?.split(|byte| *byte == b'|');
     let id = fields.next()?;
-    match id.is_empty()
+    if id.is_empty()
         || id.len() > MAX_ID_LENGTH
         || !id
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'_' | b'.' | b'-'))
-    {
-        true => return None,
-        false => {}
-    }
+    { return None; }
     let status = match fields.next()? {
         b"downloading" => Status::Downloading,
         b"finished" => Status::Finished,
@@ -341,8 +333,15 @@ fn transfer_value(sample: Sample, transfer: Transfer, animation: u128) -> String
     let complete = matches!(transfer, Transfer::Downloaded);
     match sample.total {
         Some(total) if sample.done.is_none() && !complete => {
-            let estimate = match total { Size::Exact(_) => "", Size::Estimated(_) => "~" };
-            format!("{} — / {estimate}{}", animated_bar(animation), byte_amount(total.bytes()))
+            let estimate = match total {
+                Size::Exact(_) => "",
+                Size::Estimated(_) => "~",
+            };
+            format!(
+                "{} — / {estimate}{}",
+                animated_bar(animation),
+                byte_amount(total.bytes())
+            )
         }
         Some(total) => {
             let percent = match transfer {
@@ -395,9 +394,12 @@ fn transfer_value(sample: Sample, transfer: Transfer, animation: u128) -> String
 }
 
 fn animated_bar(animation: u128) -> String {
-    (0..BAR_CELLS).map(|cell| match u128::from(cell) == animation {
-        true => '█', false => '░',
-    }).collect()
+    (0..BAR_CELLS)
+        .map(|cell| match u128::from(cell) == animation {
+            true => '█',
+            false => '░',
+        })
+        .collect()
 }
 
 fn byte_amount(bytes: u64) -> String {

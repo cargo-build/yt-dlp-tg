@@ -24,7 +24,8 @@ pub const PAGE_SIZE: usize = 5;
 const MAX_PAGES: usize = 10;
 const MAX_STDOUT_BYTES: usize = 16 * 1024 * 1024;
 const AUDIO_SELECTOR: &str = "bestaudio[acodec=opus]/best[acodec=opus]/bestaudio/best";
-const MUSIC_SELECTOR: &str = r"bestaudio[acodec~='^(aac|mp4a\.40\..+)$']/best[acodec~='^(aac|mp4a\.40\..+)$']";
+const MUSIC_SELECTOR: &str =
+    r"bestaudio[acodec~='^(aac|mp4a\.40\..+)$']/best[acodec~='^(aac|mp4a\.40\..+)$']";
 
 /// An installed extractor with an explicit text-search prefix. @req DL-2
 #[derive(Debug, Clone)]
@@ -403,9 +404,16 @@ pub async fn download(
 }
 
 fn native_aac(metadata: &serde_json::Value) -> bool {
-    let audio = |format: &serde_json::Value| format.get("acodec").and_then(serde_json::Value::as_str)
-        .is_some_and(|codec| codec == "aac" || codec.starts_with("mp4a.40."));
-    match metadata.get("formats").and_then(serde_json::Value::as_array) {
+    let audio = |format: &serde_json::Value| {
+        format
+            .get("acodec")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|codec| codec == "aac" || codec.starts_with("mp4a.40."))
+    };
+    match metadata
+        .get("formats")
+        .and_then(serde_json::Value::as_array)
+    {
         Some(formats) => formats.iter().any(audio),
         None => audio(metadata),
     }
@@ -413,27 +421,62 @@ fn native_aac(metadata: &serde_json::Value) -> bool {
 
 async fn verify_aac(config: &Config, path: &Path) -> Result<()> {
     let mut command = Command::new("ffprobe");
-    command.args(["-v", "error", "-show_entries", "stream=codec_name,codec_type:stream_disposition=attached_pic", "-of", "json"]).arg(path);
-    let output = process::run(&mut command, Duration::from_secs(config.process_timeout_secs), 64 * 1024).await?;
+    command
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_name,codec_type:stream_disposition=attached_pic",
+            "-of",
+            "json",
+        ])
+        .arg(path);
+    let output = process::run(
+        &mut command,
+        Duration::from_secs(config.process_timeout_secs),
+        64 * 1024,
+    )
+    .await?;
     let metadata: serde_json::Value = serde_json::from_slice(&output)?;
-    match metadata.get("streams").and_then(serde_json::Value::as_array) {
-        Some(streams) if streams.iter().any(|stream| stream.get("codec_type").and_then(serde_json::Value::as_str) == Some("audio"))
-            && streams.iter().all(|stream| match stream.get("codec_type").and_then(serde_json::Value::as_str) {
-                Some("audio") => stream.get("codec_name").and_then(serde_json::Value::as_str) == Some("aac"),
-                Some("video") => stream.pointer("/disposition/attached_pic").and_then(serde_json::Value::as_u64) == Some(1),
-                _ => false,
-            }) => Ok(()),
+    match metadata
+        .get("streams")
+        .and_then(serde_json::Value::as_array)
+    {
+        Some(streams)
+            if streams.iter().any(|stream| {
+                stream.get("codec_type").and_then(serde_json::Value::as_str) == Some("audio")
+            }) && streams.iter().all(|stream| {
+                match stream.get("codec_type").and_then(serde_json::Value::as_str) {
+                    Some("audio") => {
+                        stream.get("codec_name").and_then(serde_json::Value::as_str) == Some("aac")
+                    }
+                    Some("video") => {
+                        stream
+                            .pointer("/disposition/attached_pic")
+                            .and_then(serde_json::Value::as_u64)
+                            == Some(1)
+                    }
+                    _ => false,
+                }
+            }) =>
+        {
+            Ok(())
+        }
         _ => Err(Error::AacUnavailable),
     }
 }
 
 fn final_path(output: &[u8]) -> Result<String> {
     let mut paths = output.split(|byte| *byte == b'\n').filter_map(|line| {
-        std::str::from_utf8(line).ok().and_then(|line| serde_json::from_str::<String>(line).ok())
+        std::str::from_utf8(line)
+            .ok()
+            .and_then(|line| serde_json::from_str::<String>(line).ok())
     });
     match (paths.next(), paths.next()) {
         (Some(path), None) if Path::new(&path).is_absolute() => Ok(path),
-        _ => Err(Error::YtDlp("download must return one absolute output path".into())),
+        _ => Err(Error::YtDlp(
+            "download must return one absolute output path".into(),
+        )),
     }
 }
 
@@ -780,32 +823,65 @@ mod tests {
 
     #[test]
     fn native_aac_requires_source_codec_and_never_requests_aac_encoding() {
-        ["mp4a.40.2", "mp4a.40.5", "aac"].into_iter().for_each(|codec| {
-            assert!(native_aac(&serde_json::json!({"formats":[{"acodec":codec}]})));
-        });
-        ["opus", "mp3", "mp4a.69", "unknown"].into_iter().for_each(|codec| {
-            assert!(!native_aac(&serde_json::json!({"formats":[{"acodec":codec}]})));
-        });
+        ["mp4a.40.2", "mp4a.40.5", "aac"]
+            .into_iter()
+            .for_each(|codec| {
+                assert!(native_aac(
+                    &serde_json::json!({"formats":[{"acodec":codec}]})
+                ));
+            });
+        ["opus", "mp3", "mp4a.69", "unknown"]
+            .into_iter()
+            .for_each(|codec| {
+                assert!(!native_aac(
+                    &serde_json::json!({"formats":[{"acodec":codec}]})
+                ));
+            });
         let config = config();
         let mut command = Command::new("yt-dlp");
-        download_arguments(&mut command, &config, &Format::M4a, Path::new("/tmp/job"), "https://media.invalid");
-        let arguments: Vec<_> = command.get_args().map(|argument| argument.to_string_lossy().into_owned()).collect();
-        assert!(arguments.windows(2).any(|pair| pair == ["--audio-format", "best"]));
-        assert!(arguments.windows(2).any(|pair| pair == ["--remux-video", "m4a"]));
-        assert!(!arguments.iter().any(|argument| argument == "--audio-quality"));
+        download_arguments(
+            &mut command,
+            &config,
+            &Format::M4a,
+            Path::new("/tmp/job"),
+            "https://media.invalid",
+        );
+        let arguments: Vec<_> = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair == ["--audio-format", "best"])
+        );
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair == ["--remux-video", "m4a"])
+        );
+        assert!(
+            !arguments
+                .iter()
+                .any(|argument| argument == "--audio-quality")
+        );
         assert!(!MUSIC_SELECTOR.ends_with("/bestaudio/best"));
     }
 
     #[test]
     fn final_path_is_unique_absolute_and_separate_from_optional_frames() {
         assert_eq!(
-            final_path(b"yt-dlp-tg-progress1|a|finished|NA|100|NA\n\"/tmp/media.m4a\"\n").expect("progress and final path"),
+            final_path(b"yt-dlp-tg-progress1|a|finished|NA|100|NA\n\"/tmp/media.m4a\"\n")
+                .expect("progress and final path"),
             "/tmp/media.m4a"
         );
         assert!(final_path(b"yt-dlp-tg-progress1|bad\n").is_err());
         assert!(final_path(b"\"relative.m4a\"\n").is_err());
         assert!(final_path(b"\"/tmp/one\"\n\"/tmp/two\"\n").is_err());
-        assert_eq!(final_path(b"\xff\n\"/tmp/media.opus\"\n").expect("bad optional output"), "/tmp/media.opus");
+        assert_eq!(
+            final_path(b"\xff\n\"/tmp/media.opus\"\n").expect("bad optional output"),
+            "/tmp/media.opus"
+        );
     }
 
     #[test]

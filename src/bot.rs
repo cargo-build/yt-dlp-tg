@@ -885,14 +885,33 @@ async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
     if matches!(&result, Err(Error::AacUnavailable)) {
         tracing::info!(stage = "delivery", outcome = "native_aac_unavailable",
             source = ?telemetry::source(&request.media.url), "Media request");
-        let mut session = Session::new(app, UserId(request.user_id), chat, status,
-            request.language, request.media.url.clone());
+        let mut session = Session::new(
+            app,
+            UserId(request.user_id),
+            chat,
+            status,
+            request.language,
+            request.media.url.clone(),
+        );
         session.selected = Some(request.media.clone().into());
-        let keyboard = InlineKeyboardMarkup::new([vec![session.button(request.language.text(Text::Audio), 'a', 0)]]);
-        let body = format!("{}\n{}\n\n{}", request.media.title.chars().take(240).collect::<String>(),
-            request.media.url, request.language.text(Text::NativeAacUnavailable));
+        let keyboard = InlineKeyboardMarkup::new([vec![session.button(
+            request.language.text(Text::Audio),
+            'a',
+            0,
+        )]]);
+        let body = format!(
+            "{}\n{}\n\n{}",
+            request.media.title.chars().take(240).collect::<String>(),
+            request.media.url,
+            request.language.text(Text::NativeAacUnavailable)
+        );
         app.remember(session);
-        if bot.edit_message_text(chat, status, body).reply_markup(keyboard).await.is_err() {
+        if bot
+            .edit_message_text(chat, status, body)
+            .reply_markup(keyboard)
+            .await
+            .is_err()
+        {
             tracing::warn!("Cannot offer the Opus alternative");
         }
         return;

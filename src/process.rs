@@ -17,6 +17,9 @@ pub struct DirectoryLimit<'a> {
     pub total_bytes: u64,
 }
 
+/// Synchronous line observation never owns child I/O or its lifetime. @req DL-8 DL-11
+pub type LineObserver<'a> = &'a dyn Fn(&[u8]);
+
 /// Drain a child with bounded output; kill and reap its group on timeout. @req DL-8 DL-12
 pub async fn run(command: &mut Command, deadline: Duration, limit: usize) -> Result<Vec<u8>> {
     run_inner(command, deadline, limit, None, None).await
@@ -28,7 +31,7 @@ pub async fn run_guarded(
     deadline: Duration,
     limit: usize,
     directory: DirectoryLimit<'_>,
-    observer: Option<&dyn Fn(&[u8])>,
+    observer: Option<LineObserver<'_>>,
 ) -> Result<Vec<u8>> {
     run_inner(command, deadline, limit, Some(directory), observer).await
 }
@@ -38,7 +41,7 @@ async fn run_inner(
     deadline: Duration,
     limit: usize,
     directory: Option<DirectoryLimit<'_>>,
-    observer: Option<&dyn Fn(&[u8])>,
+    observer: Option<LineObserver<'_>>,
 ) -> Result<Vec<u8>> {
     command
         .stdin(Stdio::null())
@@ -166,14 +169,18 @@ fn kill_group(process_id: i32) -> io::Result<()> {
 }
 
 struct Lines<'a> {
-    observer: &'a dyn Fn(&[u8]),
+    observer: LineObserver<'a>,
     pending: Vec<u8>,
     dropping: bool,
 }
 
 impl<'a> Lines<'a> {
-    fn new(observer: &'a dyn Fn(&[u8])) -> Self {
-        Self { observer, pending: Vec::new(), dropping: false }
+    fn new(observer: LineObserver<'a>) -> Self {
+        Self {
+            observer,
+            pending: Vec::new(),
+            dropping: false,
+        }
     }
 
     fn push(&mut self, bytes: &[u8]) {
@@ -202,7 +209,7 @@ impl<'a> Lines<'a> {
 async fn read_pipe(
     mut reader: impl AsyncRead,
     limit: usize,
-    observer: Option<&dyn Fn(&[u8])>,
+    observer: Option<LineObserver<'_>>,
 ) -> io::Result<(Vec<u8>, bool)> {
     let mut output = Vec::new();
     let mut overflow = false;
@@ -212,11 +219,15 @@ async fn read_pipe(
         let read = read?;
         match read {
             0 => {
-                if let Some(lines) = &mut lines { lines.finish(); }
+                if let Some(lines) = &mut lines {
+                    lines.finish();
+                }
                 return Ok((output, overflow));
             }
             _ => {
-                if let Some(lines) = &mut lines { lines.push(&buffer[..read]); }
+                if let Some(lines) = &mut lines {
+                    lines.push(&buffer[..read]);
+                }
                 let kept = read.min(limit.saturating_sub(output.len()));
                 output.extend_from_slice(&buffer[..kept]);
                 overflow |= kept < read;
@@ -311,7 +322,9 @@ mod tests {
         let marker = directory.path().join("continue");
         let observe = |line: &[u8]| {
             lines.borrow_mut().push(line.to_vec());
-            if line == b"frame|1" { std::fs::write(&marker, b"continue").expect("release fixture"); }
+            if line == b"frame|1" {
+                std::fs::write(&marker, b"continue").expect("release fixture");
+            }
         };
         let mut command = Command::new("python3");
         command.args(["-c", "import sys,time,pathlib; print('frame|1',flush=True)\nwhile not pathlib.Path(sys.argv[1]).exists(): time.sleep(.01)\nprint('x'*2048); sys.stderr.write('private\\n'); print(chr(34)+'/tmp/media.m4a'+chr(34))"]).arg(&marker);
@@ -319,12 +332,22 @@ mod tests {
             &mut command,
             Duration::from_secs(3),
             4096,
-            DirectoryLimit { path: directory.path(), file_bytes: 4096, total_bytes: 4096 },
+            DirectoryLimit {
+                path: directory.path(),
+                file_bytes: 4096,
+                total_bytes: 4096,
+            },
             Some(&observe),
-        ).await.expect("observer releases child before its deadline");
+        )
+        .await
+        .expect("observer releases child before its deadline");
         assert_eq!(lines.borrow().first(), Some(&b"frame|1".to_vec()));
         assert!(output.ends_with(b"\"/tmp/media.m4a\"\n"));
-        assert_eq!(lines.borrow().len(), 2, "oversized line and stderr are excluded");
+        assert_eq!(
+            lines.borrow().len(),
+            2,
+            "oversized line and stderr are excluded"
+        );
     }
 
     #[compio::test]

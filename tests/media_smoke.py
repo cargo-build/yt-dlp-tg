@@ -28,7 +28,7 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
 
 def main():
     source = (Path(__file__).resolve().parents[1] / 'src/media.rs').read_text()
-    selectors = {kind: re.search(rf'const {kind}_SELECTOR: &str = r?"([^"]+)";', source)[1] for kind in ('AUDIO', 'MUSIC')}
+    selectors = {kind: re.search(rf'const {kind}_SELECTOR: &str\s*=\s*r?"([^"]+)";', source)[1] for kind in ('AUDIO', 'MUSIC')}
     opus_arguments = ast.literal_eval(re.search(r'Format::Opus => \{\s*command.args\((\[.*?\])\)', source, re.S)[1].replace('AUDIO_SELECTOR', repr(selectors['AUDIO'])))
     music_arguments = ast.literal_eval(re.search(r'Format::M4a => \{\s*command.args\((\[.*?\])\)', source, re.S)[1].replace('MUSIC_SELECTOR', repr(selectors['MUSIC'])))
     with tempfile.TemporaryDirectory(prefix='yt-dlp-tg-codecs-') as scratch:
@@ -114,7 +114,7 @@ def main():
             assert status == 0 and selected == 'best', 'reserved format ID was interpreted as a selector alias'
             status, selected = select_formats([video('combined_aac', 720)], selectors['AUDIO'])
             assert status == 0 and selected == 'combined_aac'
-            print('real yt-dlp/FFmpeg: JPEG/WebP covers embedded with unchanged Opus packets and no sidecars; native AAC copy, codec conversions and pinned resolution selectors passed')
+            print('real yt-dlp/FFmpeg: JPEG/WebP covers embedded with unchanged Opus packets and no sidecars; native AAC packet copy/ranking, non-AAC rejection and pinned resolution selectors passed')
         finally:
             server.shutdown()
 
