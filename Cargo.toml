@@ -1,0 +1,39 @@
+[package]
+name = "yt-dlp-tg"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "Apache-2.0"
+description = "Personal Telegram bot that downloads music/videos from YouTube via yt-dlp (compio runtime)."
+
+[dependencies]
+compio = { version = "0.19.2", default-features = false, features = [
+    "runtime",
+    "io-uring",
+    "macros",
+    "io",
+    "fs",
+    "net",
+    "time",
+    "signal",
+    "process",
+] }
+teloxide = { git = "https://github.com/cargo-build/teloxide.git", rev = "d585bf882691f9500af230255fe9a9900afb4342", default-features = false, features = ["rustls", "webhooks-tako"] }
+cyper = { version = "0.9", default-features = false, features = ["rustls", "json", "multipart", "stream", "socks"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+async-lock = "3"
+libc = "0.2"
+url = "2"
+rand = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+redb = "4.3"
+iggy = { git = "https://github.com/cargo-build/iggy.git", rev = "5424fd3c800c29c3184e392394fbf6834e281b67", features = ["io-uring"] }
+percent-encoding = "2"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+[dev-dependencies]
+tempfile = "3"

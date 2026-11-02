@@ -1,0 +1,31 @@
+#!/sbin/openrc-run
+
+description="Local durable Telegram downloader queue"
+supervisor="supervise-daemon"
+command="/opt/iggy-yt-dlp/current/iggy-server"
+command_user="iggy-yt-dlp:iggy-yt-dlp"
+directory="/var/lib/iggy-yt-dlp"
+pidfile="/run/iggy-yt-dlp.pid"
+output_log="/var/log/iggy-yt-dlp/broker.log"
+error_log="$output_log"
+umask="0077"
+respawn_delay=5
+respawn_max=0
+retry="TERM/45/KILL/5"
+supervise_daemon_args="--nicelevel 10 --no-new-privs"
+export IGGY_CONFIG_PATH="/etc/iggy-yt-dlp/server.toml"
+export IGGY_ENV_PATH="/etc/iggy-yt-dlp/server.env"
+
+depend() {
+    need localmount
+    before yt-dlp-tg
+}
+
+start_pre() {
+    test -x "$command" || return 1
+    test -r "$IGGY_CONFIG_PATH" || return 1
+    test -r "$IGGY_ENV_PATH" || return 1
+    checkpath --directory --owner "$command_user" --mode 0700 \
+        "$directory" /var/log/iggy-yt-dlp || return 1
+    checkpath --file --owner "$command_user" --mode 0600 "$output_log"
+}

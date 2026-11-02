@@ -1,0 +1,32 @@
+{
+  "not_recognized": {
+    "en": "Could not identify the artist and title. Please enter them as text.",
+    "zh": "无法识别歌手和曲名，请以文字输入。",
+    "hi": "कलाकार और गाने का नाम पहचाना नहीं जा सका। कृपया उन्हें टेक्स्ट में लिखें।",
+    "es": "No se pudieron identificar el artista y el título. Escríbelos como texto.",
+    "ar": "تعذر تحديد الفنان وعنوان المقطع. يرجى إدخالهما كنص.",
+    "fr": "Impossible d’identifier l’artiste et le titre. Saisissez-les sous forme de texte.",
+    "pt": "Não foi possível identificar o artista e o título. Digite-os como texto.",
+    "ru": "Не удалось определить исполнителя и название. Введите их текстом."
+  },
+  "injection_detected": {
+    "en": "The image appears to contain instructions directed at the recognizer. No search was started.",
+    "zh": "图片中似乎包含针对识别系统的指令，未启动搜索。",
+    "hi": "चित्र में पहचान प्रणाली को निर्देश देने वाला पाठ दिखाई देता है। खोज शुरू नहीं की गई।",
+    "es": "La imagen parece contener instrucciones dirigidas al sistema de reconocimiento. No se inició ninguna búsqueda.",
+    "ar": "يبدو أن الصورة تحتوي على تعليمات موجّهة إلى نظام التعرف. لم يبدأ البحث.",
+    "fr": "L’image semble contenir des instructions destinées au système de reconnaissance. Aucune recherche n’a été lancée.",
+    "pt": "A imagem parece conter instruções dirigidas ao sistema de reconhecimento. Nenhuma busca foi iniciada.",
+    "ru": "Похоже, изображение содержит инструкции для системы распознавания. Поиск не запущен."
+  },
+  "provider_error": {
+    "en": "The recognition service is unavailable or returned an invalid response. Try again later or enter the artist and title as text.",
+    "zh": "识别服务不可用或返回了无效响应。请稍后重试，或以文字输入歌手和曲名。",
+    "hi": "पहचान सेवा उपलब्ध नहीं है या उसने अमान्य जवाब दिया है। बाद में प्रयास करें या कलाकार और गाने का नाम टेक्स्ट में लिखें।",
+    "es": "El servicio de reconocimiento no está disponible o devolvió una respuesta no válida. Inténtalo más tarde o escribe el artista y el título.",
+    "ar": "خدمة التعرف غير متاحة أو أعادت استجابة غير صالحة. حاول لاحقًا أو أدخل الفنان وعنوان المقطع كنص.",
+    "fr": "Le service de reconnaissance est indisponible ou a renvoyé une réponse invalide. Réessayez plus tard ou saisissez l’artiste et le titre.",
+    "pt": "O serviço de reconhecimento está indisponível ou retornou uma resposta inválida. Tente mais tarde ou digite o artista e o título.",
+    "ru": "Сервис распознавания недоступен или вернул некорректный ответ. Попробуйте позже или введите исполнителя и название текстом."
+  }
+}

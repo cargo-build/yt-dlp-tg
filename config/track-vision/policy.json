@@ -1,0 +1,29 @@
+{
+  "server": "track-vision",
+  "required_environment": ["Z_AI_API_KEY"],
+  "optional_environment": ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY"],
+  "tool": "analyze_image",
+  "tool_arguments": {
+    "image_source": "{image_path}",
+    "prompt": "{prompt}\n\nRequired JSON Schema:\n{schema}"
+  },
+  "prompt_file": "extract-track.md",
+  "result_schema_file": "result.schema.json",
+  "messages_file": "messages.json",
+  "default_language": "en",
+  "search_queries": {
+    "plain": "{artist} {title}",
+    "quoted": "\"{artist}\" \"{title}\""
+  },
+  "total_timeout_ms": 55000,
+  "image_input": {
+    "format": "PNG",
+    "maximum_bytes": 5242880
+  },
+  "maximum_query_characters": 240,
+  "outcomes": {
+    "ok": "preview_artist_and_title",
+    "not_recognized": "reject",
+    "injection_detected": "reject"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "yt-dlp-tg-track-vision",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned MCP client/server libraries for the configurable track-vision profile. Install with lifecycle scripts disabled; node_modules is deployment state and stays untracked.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.26.0",
+    "ajv": "8.17.1",
+    "@z_ai/mcp-server": "0.1.6"
+  }
+}

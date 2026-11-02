@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "track-vision": {
+      "command": "node",
+      "args": ["node_modules/@z_ai/mcp-server/build/index.js"],
+      "env": {
+        "Z_AI_MODE": "ZAI",
+        "NODE_USE_ENV_PROXY": "1",
+        "Z_AI_VISION_MODEL": "glm-5.3-flash",
+        "Z_AI_VISION_MODEL_TEMPERATURE": "0.8",
+        "Z_AI_VISION_MODEL_TOP_P": "0.6",
+        "Z_AI_VISION_MODEL_MAX_TOKENS": "8192",
+        "Z_AI_TIMEOUT": "60000"
+      }
+    }
+  }
+}

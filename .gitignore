@@ -1,0 +1,12 @@
+/target/
+/.env
+/.env.*
+!/.env.example
+/secrets/
+/cookies.txt
+/youtube-cookies.txt
+*.redb
+*.redb.*
+__pycache__/
+*.py[cod]
+node_modules/

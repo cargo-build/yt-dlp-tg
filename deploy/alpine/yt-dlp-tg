@@ -1,0 +1,33 @@
+#!/sbin/openrc-run
+
+description="Private Telegram media downloader"
+supervisor="supervise-daemon"
+command="/opt/yt-dlp-tg/current/yt-dlp-tg"
+command_user="yt-dlp-tg:yt-dlp-tg"
+directory="/var/lib/yt-dlp-tg"
+pidfile="/run/yt-dlp-tg.pid"
+output_log="/var/log/yt-dlp-tg/bot.log"
+error_log="/var/log/yt-dlp-tg/bot.log"
+umask="0077"
+respawn_delay=5
+respawn_max=0
+retry="TERM/3600/KILL/5"
+supervise_daemon_args="--nicelevel 10 --no-new-privs"
+
+depend() {
+    need net
+    use dns
+    if [ -n "$IGGY_CONNECTION_STRING_FILE" ] || [ -n "$IGGY_CONNECTION_STRING" ]; then
+        need iggy-yt-dlp
+    fi
+}
+
+start_pre() {
+    test -x "$command" || return 1
+    test -x "$YTDLP_PATH" || return 1
+    test -r "$BOT_TOKEN_FILE" || return 1
+    checkpath --directory --owner "$command_user" --mode 0700 \
+        "$directory" /var/cache/yt-dlp-tg /var/cache/yt-dlp-tg/downloads \
+        /var/log/yt-dlp-tg || return 1
+    checkpath --file --owner "$command_user" --mode 0600 "$output_log"
+}

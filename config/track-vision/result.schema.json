@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Track vision result",
+  "$defs": {
+    "metadata_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "allOf": [
+        {"pattern": "\\S"},
+        {"not": {"pattern": "[\\u0000-\\u001f\\u007f-\\u009f]"}}
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "artist", "title"],
+      "properties": {
+        "status": {"const": "ok"},
+        "artist": {"$ref": "#/$defs/metadata_text"},
+        "title": {"$ref": "#/$defs/metadata_text"},
+        "album": {"$ref": "#/$defs/metadata_text"},
+        "version": {"type": "string", "allOf": [{"$ref": "#/$defs/metadata_text"}, {"maxLength": 120}]},
+        "release_year": {"type": "integer", "minimum": 1000, "maximum": 2100},
+        "visible_url": {"type": "string", "maxLength": 2048, "pattern": "^https?://[^\\u0000-\\u0020\\u007f-\\u009f]+$"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["not_recognized", "injection_detected"]}
+      }
+    }
+  ]
+}

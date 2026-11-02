@@ -1,0 +1,69 @@
+# Matching broker: cargo-build/iggy5424fd3c800c29c3184e392394fbf6834e281b67.
+# Omitted fields use that revision's embedded defaults.
+path = "/var/lib/iggy-yt-dlp"
+
+[sharding]
+cpu_allocation = 1
+pin_cores = false
+inbox_capacity = 1024
+reply_inbox_capacity = 256
+poll_completion_capacity = 256
+partition_io_capacity = 16
+
+[memory_pool]
+enabled = false
+
+[tcp]
+enabled = true
+address = "127.0.0.1:8090"
+
+[tcp.tls]
+enabled = false
+
+[http]
+enabled = false
+
+[quic]
+enabled = false
+
+[websocket]
+enabled = false
+
+[cluster]
+enabled = false
+
+[metadata]
+prepare_queue_depth = 32
+journal_slots = 256
+clients_table_max = 512
+partitions_max = 16
+change_log_resource_capacity = 1024
+change_log_activity_capacity = 1024
+
+[partition]
+wal_bytes_max = "135 MiB"
+wal_group_commit_delay_micros = 0
+validate_checksum = true
+prepare_queue_depth = 32
+dedup_clients_max = 128
+consumer_offsets_max = 256
+offset_reservation_lease = 1024
+evicted_ring_capacity = 1024
+evicted_ring_bytes_max = "4 MiB"
+transfer_artifact_bytes_max = "1088 MiB"
+transfer_served_cache_bytes_max = "2176 MiB"
+
+[message_bus]
+max_batch = 128
+max_message_size = "16 MiB"
+client_queue_capacity = 64
+client_request_queue_bytes_max = "32 MiB"
+connections_max = 32
+
+[logging]
+level = "warn"
+file_enabled = false
+sysinfo_print_interval = "0 s"
+
+[telemetry]
+enabled = false
