@@ -417,7 +417,8 @@ pub(crate) async fn download(
 }
 
 fn download_deadline(seconds: u64) -> Result<Instant> {
-    Instant::now().checked_add(Duration::from_secs(seconds))
+    Instant::now()
+        .checked_add(Duration::from_secs(seconds))
         .ok_or_else(|| Error::Config("download timeout exceeds the platform clock range".into()))
 }
 

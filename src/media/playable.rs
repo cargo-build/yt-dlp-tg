@@ -949,7 +949,10 @@ mod tests {
             ..video_stream(540, 960)
         };
         rejected(validate_video(&video, 960), HDR_UNSUPPORTED);
-        let known_sdr = VideoStream { color_transfer: Some("bt2020-10".into()), ..video };
+        let known_sdr = VideoStream {
+            color_transfer: Some("bt2020-10".into()),
+            ..video
+        };
         validate_video(&known_sdr, 960).expect("tagged SDR remains supported");
     }
 
