@@ -67,7 +67,8 @@ elif '--dump-single-json' in a:
             formats += [{'format_id':'v'+str(height),'height':height,'vcodec':'avc1','acodec':'none','protocol':'http','url':origin+'/probe/'+kind} for height,kind in [(640,'video'),(720,'partial'),(1080,'compressed'),(480,'missing'),(360,'error'),(240,'html')]]
         if operand.endswith('/opus-only'):
             formats = [{'format_id':'opus','vcodec':'none','acodec':'opus','filesize':10000}]
-        metadata = {'title':'Direct media','webpage_url':operand,'formats':formats}
+        metadata = {'title':'Direct media','webpage_url':operand,'formats':formats,
+                    'acodec':'opus' if operand.endswith('/opus-only') else 'mp4a.40.2'}
         if operand.endswith('/header-sizes'): metadata['http_headers'] = {'Referer':'https://fixture.invalid/'}
         if urllib.parse.urlparse(operand).hostname in ('youtu.be','www.youtube.com','m.youtube.com','music.youtube.com'):
             metadata.update(id='dQw4w9WgXcQ', extractor_key='Youtube')
@@ -160,10 +161,18 @@ class Telegram(http.server.BaseHTTPRequestHandler):
                 if not size:
                     self.rfile.readline()
                     break
-                chunks.append(self.rfile.read(size))
                 if self.server.state.get('slow_upload') and self.path.lower().endswith('/sendaudio'):
-                    self.server.state['upload_read_bytes'] = self.server.state.get('upload_read_bytes',0)+size
-                    time.sleep(.07)
+                    remaining = size
+                    while remaining:
+                        piece = self.rfile.read(min(remaining, 64*1024))
+                        if not piece:
+                            raise ConnectionError('truncated fixture upload')
+                        chunks.append(piece)
+                        remaining -= len(piece)
+                        self.server.state['upload_read_bytes'] = self.server.state.get('upload_read_bytes',0)+len(piece)
+                        time.sleep(len(piece)/(768*1024))
+                else:
+                    chunks.append(self.rfile.read(size))
                 self.rfile.read(2)
             body = b''.join(chunks)
         else:
@@ -286,6 +295,8 @@ def smoke(binary, mode, startup_stop=False, images=False, vision=False, queue_en
     state = {'condition': threading.Condition(), 'updates': [], 'events': [], 'sequence': 100, 'webhook': None, 'delay_setup': startup_stop, 'setup_started': threading.Event(), 'release_setup': threading.Event(), 'files': {}, 'uploads': 0, 'reject': {}, 'rejections': 0}
     state['reject_duplicate_edits'] = vision
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Telegram)
+    if progress_only:
+        server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 64*1024)
     server.daemon_threads = True
     server.state = state
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -453,7 +464,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     assert len({event[1]['message_id'] for event in events})==1, 'progress created another status message'
                     sends = [event[1]['text'] for event in events if active(event[1],'Sending…')]
                     percents = [int(re.search(r'(\d+)%',text.split('▶ Sending…',1)[1])[1]) for text in sends if '%' in text.split('▶ Sending…',1)[1]]
-                    assert any(0<value<100 for value in percents) and len(set(percents))>=2, 'upload did not stream measured progress'
+                    assert any(0<value<100 for value in percents) and len(set(percents))>=2, ('upload did not stream measured progress',percents,[(round(event[0]-state['progress_times'][0][0],2),event[3]) for event in state['progress_times']])
                     cadence=[]
                     for previous,current in zip(state['progress_times'],state['progress_times'][1:]):
                         old_phase='sending' if '▶ Sending…' in previous[1] else 'downloading'

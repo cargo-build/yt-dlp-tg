@@ -267,7 +267,9 @@ impl Download {
 
 impl Stream {
     fn observe(&mut self, frame: Frame<'_>) {
-        if self.finished { return; }
+        if self.finished {
+            return;
+        }
         self.total = match (self.total, frame.total) {
             (Some(Size::Exact(total)), Some(Size::Estimated(_)) | None) => Some(Size::Exact(total)),
             (_, Some(total)) => Some(total),
@@ -288,7 +290,9 @@ impl Stream {
 }
 
 fn parse_frame(line: &[u8]) -> Option<Frame<'_>> {
-    if line.len() > MAX_FRAME_LENGTH { return None; }
+    if line.len() > MAX_FRAME_LENGTH {
+        return None;
+    }
     let mut fields = line.strip_prefix(FRAME_PREFIX)?.split(|byte| *byte == b'|');
     let id = fields.next()?;
     if id.is_empty()
@@ -296,7 +300,9 @@ fn parse_frame(line: &[u8]) -> Option<Frame<'_>> {
         || !id
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'_' | b'.' | b'-'))
-    { return None; }
+    {
+        return None;
+    }
     let status = match fields.next()? {
         b"downloading" => Status::Downloading,
         b"finished" => Status::Finished,

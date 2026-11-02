@@ -414,8 +414,8 @@ fn native_aac(metadata: &serde_json::Value) -> bool {
         .get("formats")
         .and_then(serde_json::Value::as_array)
     {
-        Some(formats) => formats.iter().any(audio),
-        None => audio(metadata),
+        Some(formats) if !formats.is_empty() => formats.iter().any(audio),
+        _ => audio(metadata),
     }
 }
 

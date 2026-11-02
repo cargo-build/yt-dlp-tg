@@ -72,6 +72,7 @@ def main():
     parser.add_argument('--test-binary', help='compiled Rust test executable; optional on SG')
     parser.add_argument('--trace', help='optional local strace output for native probe')
     parser.add_argument('--status-only', action='store_true', help='focused progress-edit regression')
+    parser.add_argument('--progress-only', action='store_true', help='streamed two-phase progress and native AAC workflow')
     args = parser.parse_args()
     binary, server = str(Path(args.binary).resolve()), str(Path(args.broker).resolve())
     with tempfile.TemporaryDirectory(prefix='yt-dlp-tg-iggy-') as scratch:
@@ -85,6 +86,9 @@ def main():
             queue_env = {'IGGY_CONNECTION_STRING_FILE': str(broker.connection),
                          'IGGY_STREAM': 'yt_dlp_tg', 'IGGY_TOPIC': 'downloads'}
             for mode in ('polling', 'webhook'):
+                if args.progress_only:
+                    smoke(binary, mode, queue_env=queue_env, progress_only=True)
+                    continue
                 if args.status_only:
                     smoke(binary, mode, queue_env=queue_env, status_only=True)
                     continue
