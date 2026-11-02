@@ -4,6 +4,7 @@ use teloxide::{
     Bot,
     types::{InlineKeyboardButton, InlineKeyboardMarkup},
 };
+use tracing::Instrument;
 
 use super::{App, Session};
 use crate::{
@@ -31,7 +32,8 @@ pub(super) async fn prepare(
             .selected
             .as_ref()
             .expect("video callback has a selected source");
-        match media::video_choices(&app.config, &selected.media).await {
+        match media::video_choices(&app.config, &selected.media)
+            .instrument(tracing::info_span!("media_request", request_id = session.id)).await {
             Ok(choices) => {
                 telemetry::video_options(session.id, &selected.media.url, &choices);
                 session

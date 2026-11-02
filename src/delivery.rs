@@ -23,6 +23,7 @@ use crate::{
     i18n::{Language, Text},
     media::{self, Format, Media},
     progress::Progress,
+    telemetry::{self, transfer::Upload},
     upload,
 };
 
@@ -46,14 +47,15 @@ pub async fn deliver(
         source: request.media.url.clone(),
         variant: variant(&request.format),
     };
-    if let Some(cached) = cache.get(key.clone()).await? {
+    if let Some(cached) = telemetry::phase("cache_lookup", cache.get(key.clone())).await? {
         if !matches_format(&request.format, &cached.kind) {
             return Err(Error::Cache(
                 "cached media type does not match requested output".into(),
             ));
         }
         let feedback = Progress::cached();
-        match tracked(
+        let started = Instant::now();
+        let reused = tracked(
             bot,
             request.chat,
             request.status,
@@ -67,8 +69,11 @@ pub async fn deliver(
                 &request.media.title,
             ),
         )
-        .await
-        {
+        .await;
+        tracing::info!(stage = "transfer_phase", component = "cached_send",
+            outcome = if reused.is_ok() { "ok" } else { "failed" },
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0, "Media component");
+        match reused {
             Ok(_) => {
                 tracing::info!(kind = ?cached.kind, "Reused Telegram media");
                 return Ok(());
@@ -113,9 +118,12 @@ pub async fn deliver(
         }
         let (kind, extension) = upload_kind(&request.format, &path)?;
         feedback.sending(Some(size));
+        let opened = telemetry::phase("file_open", async { Ok(compio::fs::File::open(&path).await?) }).await?;
+        let diagnostics = Upload::new(size);
         let file = InputFile::read(upload::counted(
-            compio::fs::File::open(&path).await?,
+            opened,
             feedback.clone(),
+            diagnostics.clone(),
         ))
         .file_name(upload_name(&request.media.title, extension));
         let sent = tracked(
@@ -124,19 +132,19 @@ pub async fn deliver(
             request.status,
             request.language,
             &feedback,
-            send_typed(
+            diagnostics.run(send_typed(
                 bot,
                 request.chat,
                 &request.format,
                 file,
                 &request.media.title,
-            ),
+            )),
         )
         .await
         .map_err(|_| Error::Telegram("media upload failed".into()))?;
         let cached = response_file(&sent, kind)?;
         let kind = cached.kind.clone();
-        cache.put(key, cached).await?;
+        telemetry::phase("cache_write", cache.put(key, cached)).await?;
         tracing::info!(kind = ?kind, "Uploaded Telegram media and saved its reusable ID");
         Ok(())
     }

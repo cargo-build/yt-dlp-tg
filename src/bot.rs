@@ -542,11 +542,15 @@ async fn message(
         source = ?input_url.as_deref().and_then(telemetry::source),
         "Media request"
     );
+    let started = Instant::now();
     let _slot = app.acquire_media_slot(&bot, &session).await?;
+    tracing::info!(request_id = session.id, stage = "transfer_phase", component = "media_slot",
+        outcome = "ok", elapsed_ms = started.elapsed().as_secs_f64() * 1000.0, "Media component");
     session.created = Instant::now();
     if let Some(url) = input_url {
         session.status(&bot, Text::Checking).await?;
-        match media::probe(&app.config, &url).await {
+        match media::probe(&app.config, &url)
+            .instrument(tracing::info_span!("media_request", request_id = session.id)).await {
             Ok(media) => {
                 tracing::info!(
                     request_id = session.id,
@@ -859,6 +863,7 @@ async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
         {
             return Err(Error::Queue("stored request is no longer authorized"));
         }
+        let started = Instant::now();
         let _slot = match app.media_slot.try_acquire() {
             Some(slot) => slot,
             None => {
@@ -866,6 +871,8 @@ async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
                 app.media_slot.acquire().await
             }
         };
+        tracing::info!(stage = "transfer_phase", component = "media_slot", outcome = "ok",
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0, "Media component");
         delivery::deliver(
             bot,
             &app.cache,

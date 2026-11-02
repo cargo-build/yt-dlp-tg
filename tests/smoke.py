@@ -325,6 +325,8 @@ class Telegram(http.server.BaseHTTPRequestHandler):
                     state['events'].append((method, payload, {}, body))
                     state['condition'].notify_all()
         response = json.dumps({'ok': True, 'result': result}).encode()
+        if method in ('sendaudio', 'sendvoice', 'sendvideo') and 'multipart/form-data' in content_type:
+            time.sleep(state.get('upload_reply_delay', 0))
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(response)))
@@ -529,6 +531,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     return
                 if progress_only:
                     state['slow_upload'] = True
+                    state['upload_reply_delay'] = 1.25
                     choose('https://media.invalid/slow-progress','m')
                     wait('editmessagetext', lambda p: active(p,'Downloading…'))
                     wait('sendaudio')
@@ -548,6 +551,27 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                             cadence.append(current[0]-previous[0])
                     assert cadence and all(2.75<=delta<=4.75 for delta in cadence), cadence
                     assert state['uploads']==downloads()==1
+                    before = downloads()
+                    choose('https://media.invalid/slow-progress','m')
+                    wait('sendaudio')
+                    wait('editmessagetext',lambda p:p.get('text')=='Sent.')
+                    assert state['uploads']==1 and downloads()==before, 'diagnostics changed cache reuse'
+                    log.flush(); log.seek(0)
+                    logged=re.sub(r'\x1b\[[0-9;]*m','',log.read())
+                    summaries=[line for line in logged.splitlines() if 'stage="upload_diagnostics"' in line and 'outcome="ok"' in line]
+                    assert len(summaries)==1, 'cached send invented an upload'
+                    summary=summaries[0]
+                    assert 'body_bytes=8388608' in summary and 'expected_bytes=8388608' in summary
+                    assert 'file_read_errors=0' in summary and 'file_read_pending=false' in summary
+                    tail=float(re.search(r'after_body_ms=Some\(([^)]+)\)',summary)[1])
+                    gap=float(re.search(r'body_gap_max_ms=([0-9.eE+-]+)',summary)[1])
+                    assert tail>=1000, ('delayed API reply was not separated',summary)
+                    assert gap>=10, ('body backpressure was not observed',summary)
+                    assert 'timer_samples=0' not in summary and 'request_poll_max_us=' in summary
+                    for component in ('metadata','source_download','file_open','cache_write','cached_send'):
+                        assert f'component="{component}"' in logged and 'stage="transfer_phase"' in logged
+                    assert 'stage="ring_diagnostics"' in logged
+                    assert '1000:fixture' not in logged and str(root) not in logged
                     for url in ('opus-only','aac-mismatch'):
                         choose('https://media.invalid/'+url,'m')
                         alternative=menu()

@@ -4,24 +4,28 @@ use std::io::Cursor;
 
 use compio::{BufResult, buf::IoBufMut, fs::File, io::AsyncRead};
 
-use crate::progress::Progress;
+use crate::{progress::Progress, telemetry::transfer::Upload};
 
 /// The local reader preserves owned InputFile streaming on compio. @req DL-11/DL-8
-pub(crate) fn counted(file: File, progress: Progress) -> impl AsyncRead + 'static {
+pub(crate) fn counted(file: File, progress: Progress, diagnostics: Upload) -> impl AsyncRead + 'static {
     Counted {
         reader: Cursor::new(file),
         progress,
+        diagnostics,
     }
 }
 
 struct Counted {
     reader: Cursor<File>,
     progress: Progress,
+    diagnostics: Upload,
 }
 
 impl AsyncRead for Counted {
     async fn read<B: IoBufMut>(&mut self, buffer: B) -> BufResult<usize, B> {
+        self.diagnostics.read_started();
         let BufResult(result, buffer) = self.reader.read(buffer).await;
+        self.diagnostics.read_finished(&result);
         BufResult(
             result.inspect(|bytes| self.progress.uploaded(*bytes)),
             buffer,
@@ -47,6 +51,7 @@ mod tests {
         let mut reader = counted(
             File::open(&path).await.expect("open fixture"),
             progress.clone(),
+            Upload::new(content.len() as u64),
         );
         let BufResult(read, first) = reader.read(Vec::with_capacity(4)).await;
         assert_eq!(read.expect("first read"), 4);
@@ -79,7 +84,7 @@ mod tests {
         let file = File::open(directory.path())
             .await
             .expect("open directory fixture");
-        let mut reader = counted(file, progress.clone());
+        let mut reader = counted(file, progress.clone(), Upload::new(100));
         let buffer = Vec::with_capacity(7);
         let capacity = buffer.capacity();
         let BufResult(read, buffer) = reader.read(buffer).await;
