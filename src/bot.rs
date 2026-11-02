@@ -8,7 +8,6 @@ use std::{
 };
 
 use futures_util::FutureExt;
-use tracing::Instrument;
 use teloxide::{
     Bot,
     dispatching::Dispatcher,
@@ -21,6 +20,7 @@ use teloxide::{
         Update, UserId,
     },
 };
+use tracing::Instrument;
 
 use crate::{
     cache::Cache,
@@ -738,16 +738,15 @@ async fn callback(
             }
             None => Err(Error::Telegram("no selected media".into())),
         };
-        match &request {
-            Ok(request) => tracing::info!(
+        let request = request.inspect(|request| {
+            tracing::info!(
                 request_id = session.id,
                 stage = "download",
                 outcome = "requested",
                 source = ?telemetry::source(&request.media.url),
                 "Media request"
-            ),
-            Err(_) => {}
-        }
+            );
+        });
         match request {
             Ok(request) => match &app.queue {
                 Some(queue) => {
@@ -770,9 +769,14 @@ async fn callback(
                         }
                     }
                 }
-                None => deliver_request(&bot, &app, request)
-                    .instrument(tracing::info_span!("download_request", request_id = session.id))
-                    .await,
+                None => {
+                    deliver_request(&bot, &app, request)
+                        .instrument(tracing::info_span!(
+                            "download_request",
+                            request_id = session.id
+                        ))
+                        .await
+                }
             },
             Err(_) => {
                 session.status(&bot, Text::Failed).await?;
@@ -883,7 +887,12 @@ async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
             tracing::info!(stage = "delivery", outcome = "sent", "Media request")
         }
         Err(error) => {
-            tracing::warn!(stage = "delivery", outcome = "failed", reason = telemetry::reason(error), "Media request")
+            tracing::warn!(
+                stage = "delivery",
+                outcome = "failed",
+                reason = telemetry::reason(error),
+                "Media request"
+            )
         }
     }
     let text = match result {
