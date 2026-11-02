@@ -144,7 +144,9 @@ impl Progress {
     pub(crate) fn download_finished(&self) {
         let mut download = self.0.download.borrow_mut();
         match download.phase {
-            DownloadPhase::Active | DownloadPhase::Preparing => download.phase = DownloadPhase::Complete,
+            DownloadPhase::Active | DownloadPhase::Preparing => {
+                download.phase = DownloadPhase::Complete
+            }
             DownloadPhase::Complete | DownloadPhase::Cached => {}
         }
     }
@@ -193,7 +195,11 @@ impl Progress {
         let (download_marker, download_value) = match download.phase {
             DownloadPhase::Preparing => (
                 '▶',
-                format!("{} {}", animated_bar(animation), language.text(Text::PreparingVideo)),
+                format!(
+                    "{} {}",
+                    animated_bar(animation),
+                    language.text(Text::PreparingVideo)
+                ),
             ),
             DownloadPhase::Active => (
                 '▶',

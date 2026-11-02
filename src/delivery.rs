@@ -11,10 +11,7 @@ use futures_util::future::{Either, select};
 use teloxide::{
     Bot, RequestError,
     errors::ApiError,
-    payloads::{
-        EditMessageTextSetters, SendAudioSetters, SendVideoSetters,
-        SendVoiceSetters,
-    },
+    payloads::{EditMessageTextSetters, SendAudioSetters, SendVideoSetters, SendVoiceSetters},
     requests::Requester,
     types::{ChatId, FileId, InlineKeyboardMarkup, InputFile, Message, MessageId},
 };
@@ -100,7 +97,13 @@ pub async fn deliver(
             request.status,
             request.language,
             &feedback,
-            media::download(config, request.media, &request.format, &directory, &feedback),
+            media::download(
+                config,
+                request.media,
+                &request.format,
+                &directory,
+                &feedback,
+            ),
         )
         .await?;
         feedback.download_finished();
@@ -121,7 +124,13 @@ pub async fn deliver(
             request.status,
             request.language,
             &feedback,
-            send_typed(bot, request.chat, &request.format, file, &request.media.title),
+            send_typed(
+                bot,
+                request.chat,
+                &request.format,
+                file,
+                &request.media.title,
+            ),
         )
         .await
         .map_err(|_| Error::Telegram("media upload failed".into()))?;
@@ -308,7 +317,9 @@ fn invalid_file_id(error: &RequestError) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{accepts_policy, invalid_file_id, matches_format, upload_kind, upload_name, variant};
+    use super::{
+        accepts_policy, invalid_file_id, matches_format, upload_kind, upload_name, variant,
+    };
     use crate::{cache::FileKind, media::Format};
     use std::path::Path;
     use teloxide::{RequestError, errors::ApiError};

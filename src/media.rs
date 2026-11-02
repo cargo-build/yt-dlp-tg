@@ -1,7 +1,7 @@
 //! Bounded yt-dlp processes and validated media metadata. @req DL-2 DL-4 DL-5 DL-8
 
-mod size;
 mod playable;
+mod size;
 
 use std::{
     collections::HashSet,
@@ -397,7 +397,12 @@ pub(crate) async fn download(
     };
     let checked_directory = directory.clone();
     let path = compio::runtime::spawn_blocking(move || {
-        validate_download(&checked_directory, Path::new(&final_path), extensions, limit)
+        validate_download(
+            &checked_directory,
+            Path::new(&final_path),
+            extensions,
+            limit,
+        )
     })
     .await
     .map_err(|_| Error::YtDlp("download file check failed".into()))??;

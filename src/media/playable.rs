@@ -476,7 +476,7 @@ async fn run_conversion(
 
 /// Map the probed streams explicitly: no default selection, cover or subtitle. @req DL-4
 fn conversion_arguments(conversion: &Conversion<'_>) -> Vec<OsString> {
-    let mut arguments = ["-nostdin", "-n", "-i"].map(OsString::from).to_vec();
+    let mut arguments = ["-nostdin", "-n", "-v", "error", "-xerror", "-threads", THREADS, "-i"].map(OsString::from).to_vec();
     arguments.push(conversion.input.as_os_str().to_owned());
     map_stream(&mut arguments, conversion.video.index);
     for audio in conversion.audio {
@@ -994,7 +994,7 @@ mod tests {
         );
         assert!(arguments.windows(2).any(|pair| pair == ["-ac:a:0", "2"]));
 
-        let silent = arguments(&video_stream(540, 960), &[]);
+        let silent = self::arguments(&video_stream(540, 960), &[]);
         assert!(silent.iter().any(|argument| argument == "-an"));
         assert!(!silent.iter().any(|argument| argument.starts_with("-c:a:")));
         assert_eq!(

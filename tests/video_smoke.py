@@ -41,7 +41,9 @@ def verify_upload(source, event, record, root):
     videos=[stream for stream in metadata['streams'] if stream['codec_type']=='video']
     audios=[stream for stream in metadata['streams'] if stream['codec_type']=='audio']
     assert len(videos)==1 and videos[0]['codec_name']=='h264'
-    assert videos[0]['pix_fmt']=='yuv420p' and videos[0]['height']==record['height']
+    rotation=next((side.get('rotation',0) for side in videos[0].get('side_data_list',[]) if side.get('side_data_type')=='Display Matrix'),0)
+    display_height=videos[0]['width'] if int(rotation)%180 else videos[0]['height']
+    assert videos[0]['pix_fmt']=='yuv420p' and display_height==record['height']
     assert all(stream['codec_name']=='aac' for stream in audios)
     assert bool(audios)==(record['audio']!='none'), 'source audio was dropped'
     run(['ffmpeg','-nostdin','-v','error','-threads','1','-i',str(output),'-f','null','-'])
@@ -67,11 +69,13 @@ def fixtures(root):
     generate('hdr.mp4',extra=('-color_trc','smpte2084','-color_primaries','bt2020','-colorspace','bt2020nc'))
     generate('wrongheight.mp4',size='256x180')
     run(['ffmpeg','-nostdin','-v','error','-i',str(h264),'-c','copy',str(root/'h264.mkv')])
+    run(['ffmpeg','-nostdin','-v','error','-i',str(h264),'-c','copy','-metadata:s:v:0','rotate=90',str(root/'rotated.mp4')])
     run(['ffmpeg','-nostdin','-v','error','-i',str(root/'vp9.mkv'),'-an','-c:v','copy',str(root/'silent.mkv')])
     (root/'corrupt.mp4').write_bytes(b'invalid MP4 fixture')
     manifest={
         'h264.mp4':{'video':'h264','audio':'aac','video_copy':True,'audio_copy':True},
         'h264.mkv':{'video':'h264','audio':'aac','video_copy':True,'audio_copy':True},
+        'rotated.mp4':{'video':'h264','audio':'aac','video_copy':True,'audio_copy':True},
         'vp9.mkv':{'video':'vp9','audio':'aac','audio_copy':True},
         'opus.mkv':{'video':'vp9','audio':'opus'},
         'silent.mkv':{'video':'vp9','audio':'none'},
@@ -81,7 +85,7 @@ def fixtures(root):
         'corrupt.mp4':{'video':'h264','audio':'aac','rejected':True},
     }
     for name,record in manifest.items():
-        record.update(file=name,height=144)
+        record.update(file=name,height=256 if name=='rotated.mp4' else 144)
     (root/'manifest.json').write_text(json.dumps(manifest))
 
 
