@@ -125,8 +125,9 @@ operator outside the source repository.
   TLS or server timings. Emit bounded numeric summaries at completion/failure/
   cancellation and during long uploads (first after one second, then every30s),
   never per chunk. Best-effort Linux ring snapshots contain only whitelisted
-  numeric process-local queue counters; missing counters remain unavailable.
-  Diagnostics run with media work on the same executor, do not buffer/retry
+  numeric process-local queue counters and opaque descriptors; missing counters
+  remain unavailable. A bounded ring read runs off the executor. Diagnostics
+  otherwise run with media work on the same executor, do not buffer/retry
   media or start another runtime, and cannot turn a successful send into failure.
   Active media work keeps Downloading and Sending rows together in the same
   existing status message, with progress updates every3.5seconds. Use observed

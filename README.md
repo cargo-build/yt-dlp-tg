@@ -100,7 +100,9 @@ even when extraction succeeded. These are service logs, not a metrics/alerting
 platform; protect and rotate them with the deployment's existing log controls.
 
 `transfer_phase` separates metadata, source download, MP4 preparation, cache,
-file open and slot wait. `upload_diagnostics` reports the actual file bytes
+file open, cached sends and slot wait. Waiting-notice delivery is timed separately
+from slot contention. Repeated metadata extractions have separate events.
+`upload_diagnostics` reports the actual file bytes
 read into the owned HTTP body, read-await time, gaps between reads, synchronous
 request-poll time, timer delay and time after the expected bytes were read.
 It reports completion/failure/cancellation, plus a sample after one second and
@@ -116,6 +118,8 @@ acknowledgements, and these fields do not isolate TLS, socket writes or every
 kernel operation. Other runtime tasks can contribute; correlate with private
 host CPU/TCP observations before assigning a cause. A low-volume or cached send
 can finish without a timer/ring sample. Missing kernel fields remain unknown.
+An abandoned in-flight read stays visible as pending; if resumed, its abandoned
+interval is counted separately rather than charged as a body-demand gap.
 
 ## Durable queue and data
 

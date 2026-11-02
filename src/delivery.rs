@@ -54,7 +54,7 @@ pub async fn deliver(
             ));
         }
         let feedback = Progress::cached();
-        let started = Instant::now();
+        let report = telemetry::Phase::start("cached_send");
         let reused = tracked(
             bot,
             request.chat,
@@ -70,13 +70,7 @@ pub async fn deliver(
             ),
         )
         .await;
-        tracing::info!(
-            stage = "transfer_phase",
-            component = "cached_send",
-            outcome = if reused.is_ok() { "ok" } else { "failed" },
-            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-            "Media component"
-        );
+        report.finish(reused.is_ok());
         match reused {
             Ok(_) => {
                 tracing::info!(kind = ?cached.kind, "Reused Telegram media");

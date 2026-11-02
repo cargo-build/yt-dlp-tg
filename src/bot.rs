@@ -104,13 +104,20 @@ impl App {
         bot: &Bot,
         session: &Session,
     ) -> std::result::Result<async_lock::SemaphoreGuard<'_>, teloxide::RequestError> {
-        match self.media_slot.try_acquire() {
-            Some(slot) => Ok(slot),
+        let ready = match self.media_slot.try_acquire() {
+            Some(slot) => Some(slot),
             None => {
-                session.status(bot, Text::Waiting).await?;
-                Ok(self.media_slot.acquire().await)
+                let notice = telemetry::Phase::start("waiting_notice");
+                let sent = session.status(bot, Text::Waiting).await;
+                notice.finish(sent.is_ok());
+                sent?;
+                None
             }
-        }
+        };
+        let report = telemetry::Phase::start("media_slot");
+        let slot = match ready { Some(slot) => slot, None => self.media_slot.acquire().await };
+        report.finish(true);
+        Ok(slot)
     }
 }
 
@@ -542,16 +549,7 @@ async fn message(
         source = ?input_url.as_deref().and_then(telemetry::source),
         "Media request"
     );
-    let started = Instant::now();
     let _slot = app.acquire_media_slot(&bot, &session).await?;
-    tracing::info!(
-        request_id = session.id,
-        stage = "transfer_phase",
-        component = "media_slot",
-        outcome = "ok",
-        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-        "Media component"
-    );
     session.created = Instant::now();
     if let Some(url) = input_url {
         session.status(&bot, Text::Checking).await?;
@@ -874,21 +872,18 @@ async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
         {
             return Err(Error::Queue("stored request is no longer authorized"));
         }
-        let started = Instant::now();
-        let _slot = match app.media_slot.try_acquire() {
-            Some(slot) => slot,
+        let ready = match app.media_slot.try_acquire() {
+            Some(slot) => Some(slot),
             None => {
+                let notice = telemetry::Phase::start("waiting_notice");
                 delivery::progress(bot, chat, status, request.language, Text::Waiting).await;
-                app.media_slot.acquire().await
+                notice.finish(true);
+                None
             }
         };
-        tracing::info!(
-            stage = "transfer_phase",
-            component = "media_slot",
-            outcome = "ok",
-            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-            "Media component"
-        );
+        let report = telemetry::Phase::start("media_slot");
+        let _slot = match ready { Some(slot) => slot, None => app.media_slot.acquire().await };
+        report.finish(true);
         delivery::deliver(
             bot,
             &app.cache,

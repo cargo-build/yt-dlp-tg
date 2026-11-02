@@ -24,6 +24,8 @@ struct State {
     bytes: u64,
     reads: u64,
     errors: u64,
+    cancelled_reads: u64,
+    cancelled_time: Duration,
     eof: u64,
     first_read: Option<Instant>,
     reading: Option<Instant>,
@@ -48,6 +50,8 @@ impl Upload {
             bytes: 0,
             reads: 0,
             errors: 0,
+            cancelled_reads: 0,
+            cancelled_time: Duration::ZERO,
             eof: 0,
             first_read: None,
             reading: None,
@@ -68,6 +72,11 @@ impl Upload {
     pub(crate) fn read_started(&self) {
         let now = Instant::now();
         let mut state = self.0.borrow_mut();
+        if let Some(abandoned) = state.reading.take() {
+            state.cancelled_reads = state.cancelled_reads.saturating_add(1);
+            state.cancelled_time = state.cancelled_time.saturating_add(now.saturating_duration_since(abandoned));
+            state.last_read = None;
+        }
         if let Some(previous) = state.last_read {
             let gap = now.saturating_duration_since(previous);
             state.gap_time = state.gap_time.saturating_add(gap);
@@ -90,9 +99,7 @@ impl Upload {
         match result {
             Ok(0) => state.eof = state.eof.saturating_add(1),
             Ok(bytes) => {
-                state.bytes = state.bytes.saturating_add(
-                    u64::try_from(*bytes).expect("supported pointer width fits u64"),
-                );
+                state.bytes = state.bytes.saturating_add(*bytes as u64);
                 if state.bytes >= state.expected && state.body_complete.is_none() {
                     state.body_complete = Some(now);
                 }
@@ -177,6 +184,8 @@ impl Upload {
         tracing::info!(stage = "upload_diagnostics", outcome,
             elapsed_ms = elapsed(state.started), expected_bytes = state.expected, body_bytes = state.bytes,
             file_reads = state.reads, file_read_errors = state.errors, file_eof = state.eof,
+            file_read_cancelled = state.cancelled_reads,
+            file_read_cancelled_us = state.cancelled_time.as_secs_f64() * 1_000_000.0,
             first_read_ms = ?state.first_read.map(since_start),
             body_complete_ms = ?state.body_complete.map(since_start),
             after_body_ms = ?state.body_complete.map(elapsed),
@@ -230,7 +239,7 @@ impl Ring {
 fn rings() -> io::Result<Vec<Ring>> {
     let mut found = Vec::new();
     for entry in std::fs::read_dir("/proc/self/fd")?.take(128) {
-        let entry = entry?;
+        let entry = match entry { Ok(entry) => entry, Err(_) => continue };
         let target = match std::fs::read_link(entry.path()) {
             Ok(target) => target,
             Err(_) => continue,
@@ -247,9 +256,9 @@ fn rings() -> io::Result<Vec<Ring>> {
             None => continue,
         };
         let mut text = String::new();
-        std::fs::File::open(Path::new("/proc/self/fdinfo").join(entry.file_name()))?
-            .take(64 * 1024)
-            .read_to_string(&mut text)?;
+        let read = std::fs::File::open(Path::new("/proc/self/fdinfo").join(entry.file_name()))
+            .and_then(|file| file.take(64 * 1024).read_to_string(&mut text));
+        if read.is_err() { continue; }
         found.push(parse_ring(descriptor, &text));
         if found.len() == 4 {
             break;
@@ -344,6 +353,23 @@ mod tests {
         assert!(result.is_err());
         assert!(upload.0.borrow().reading.is_some());
         assert_eq!(Rc::strong_count(&upload.0), 1);
+    }
+
+    #[compio::test]
+    async fn resumed_abandoned_read_is_not_charged_as_body_demand_gap() {
+        let upload = Upload::new(8);
+        upload.read_started();
+        upload.read_finished(&Ok(4));
+        upload.read_started();
+        let gap = upload.0.borrow().gap_time;
+        compio::time::sleep(Duration::from_millis(15)).await;
+        upload.read_started();
+        upload.read_finished(&Ok(4));
+        let state = upload.0.borrow();
+        assert_eq!(state.cancelled_reads, 1);
+        assert!(state.cancelled_time >= Duration::from_millis(12));
+        assert_eq!(state.gap_time, gap);
+        assert_eq!(state.bytes, 8);
     }
 
     #[test]
