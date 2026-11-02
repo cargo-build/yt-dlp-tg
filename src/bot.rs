@@ -99,6 +99,7 @@ impl App {
         sessions.insert(session.id, session);
     }
 
+    #[tracing::instrument(skip_all, fields(request_id = session.id))]
     async fn acquire_media_slot(
         &self,
         bot: &Bot,
@@ -115,7 +116,10 @@ impl App {
             }
         };
         let report = telemetry::Phase::start("media_slot");
-        let slot = match ready { Some(slot) => slot, None => self.media_slot.acquire().await };
+        let slot = match ready {
+            Some(slot) => slot,
+            None => self.media_slot.acquire().await,
+        };
         report.finish(true);
         Ok(slot)
     }
@@ -882,7 +886,10 @@ async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
             }
         };
         let report = telemetry::Phase::start("media_slot");
-        let _slot = match ready { Some(slot) => slot, None => app.media_slot.acquire().await };
+        let _slot = match ready {
+            Some(slot) => slot,
+            None => app.media_slot.acquire().await,
+        };
         report.finish(true);
         delivery::deliver(
             bot,

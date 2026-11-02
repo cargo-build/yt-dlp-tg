@@ -74,7 +74,9 @@ impl Upload {
         let mut state = self.0.borrow_mut();
         if let Some(abandoned) = state.reading.take() {
             state.cancelled_reads = state.cancelled_reads.saturating_add(1);
-            state.cancelled_time = state.cancelled_time.saturating_add(now.saturating_duration_since(abandoned));
+            state.cancelled_time = state
+                .cancelled_time
+                .saturating_add(now.saturating_duration_since(abandoned));
             state.last_read = None;
         }
         if let Some(previous) = state.last_read {
@@ -239,7 +241,10 @@ impl Ring {
 fn rings() -> io::Result<Vec<Ring>> {
     let mut found = Vec::new();
     for entry in std::fs::read_dir("/proc/self/fd")?.take(128) {
-        let entry = match entry { Ok(entry) => entry, Err(_) => continue };
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
         let target = match std::fs::read_link(entry.path()) {
             Ok(target) => target,
             Err(_) => continue,
@@ -258,7 +263,9 @@ fn rings() -> io::Result<Vec<Ring>> {
         let mut text = String::new();
         let read = std::fs::File::open(Path::new("/proc/self/fdinfo").join(entry.file_name()))
             .and_then(|file| file.take(64 * 1024).read_to_string(&mut text));
-        if read.is_err() { continue; }
+        if read.is_err() {
+            continue;
+        }
         found.push(parse_ring(descriptor, &text));
         if found.len() == 4 {
             break;

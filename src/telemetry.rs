@@ -30,8 +30,18 @@ pub(crate) struct Phase {
 
 impl Phase {
     pub(crate) fn start(component: &'static str) -> Self {
-        tracing::info!(stage = "transfer_phase", component, outcome = "started", "Media component");
-        Self { component, started: Instant::now(), outcome: "cancelled", reason: None }
+        tracing::info!(
+            stage = "transfer_phase",
+            component,
+            outcome = "started",
+            "Media component"
+        );
+        Self {
+            component,
+            started: Instant::now(),
+            outcome: "cancelled",
+            reason: None,
+        }
     }
 
     pub(crate) fn finish(mut self, success: bool) {
