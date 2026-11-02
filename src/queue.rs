@@ -192,7 +192,7 @@ mod tests {
                 url: "https://example.com/media".into(),
             },
             format: Format::M4a,
-            policy: "music-m4a-v1".into(),
+            policy: "music-native-aac-v2".into(),
         };
         let pending = store
             .submit(request())

@@ -21,6 +21,9 @@ pub enum Error {
     #[error("upload limit exceeded")]
     TooLarge,
 
+    #[error("source-native AAC is unavailable")]
+    AacUnavailable,
+
     #[error("cache: {0}")]
     Cache(String),
 

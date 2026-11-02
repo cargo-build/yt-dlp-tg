@@ -11,8 +11,10 @@ mod jobs;
 mod media;
 mod ocr;
 mod process;
+mod progress;
 mod queue;
 mod telemetry;
+mod upload;
 mod video;
 
 use crate::{config::Config, error::Result};

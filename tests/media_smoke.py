@@ -28,14 +28,19 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
 
 def main():
     source = (Path(__file__).resolve().parents[1] / 'src/media.rs').read_text()
-    selectors = {kind: re.search(rf'const {kind}_SELECTOR: &str = "([^"]+)";', source)[1] for kind in ('AUDIO', 'MUSIC')}
+    selectors = {kind: re.search(rf'const {kind}_SELECTOR: &str = r?"([^"]+)";', source)[1] for kind in ('AUDIO', 'MUSIC')}
     opus_arguments = ast.literal_eval(re.search(r'Format::Opus => \{\s*command.args\((\[.*?\])\)', source, re.S)[1].replace('AUDIO_SELECTOR', repr(selectors['AUDIO'])))
+    music_arguments = ast.literal_eval(re.search(r'Format::M4a => \{\s*command.args\((\[.*?\])\)', source, re.S)[1].replace('MUSIC_SELECTOR', repr(selectors['MUSIC'])))
     with tempfile.TemporaryDirectory(prefix='yt-dlp-tg-codecs-') as scratch:
         root = Path(scratch)
         opus = root / 'source.opus'
         combined = root / 'source.mp4'
         cover = root / 'cover.jpg'
+        aac = root / 'source.m4a'
+        best_aac = root / 'best.m4a'
         run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.3', '-c:a', 'libopus', '-threads', '1', str(opus)])
+        run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.3', '-c:a', 'aac', '-b:a', '128k', '-threads', '1', str(aac)])
+        run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=0.3', '-c:a', 'aac', '-b:a', '256k', '-threads', '1', str(best_aac)])
         run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:size=32x32', '-frames:v', '1', '-threads', '1', str(cover)])
         run(['ffmpeg', '-v', 'error', '-i', str(cover), '-frames:v', '1', '-threads', '1', str(root / 'cover.webp')])
         run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=size=1280x720:rate=5:duration=0.3', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.3', '-c:v', 'libx264', '-threads', '1', '-c:a', 'aac', '-shortest', str(combined)])
@@ -71,16 +76,28 @@ def main():
                     assert embedded == cover.read_bytes(), 'embedded image differs from the selected thumbnail'
                 assert list(directory.iterdir()) == [path], 'thumbnail sidecars were retained'
 
-            for label, filename in [('aac-copy', combined.name), ('opus-to-aac', opus.name)]:
+            for label, filename, formats, expected in [
+                ('aac-copy', combined.name, [{'format_id':'combined','url':f'{base}/{combined.name}','ext':'mp4','vcodec':'avc1','acodec':'mp4a.40.2'}], combined),
+                ('best-native-aac', aac.name, [
+                    {'format_id':'low','url':f'{base}/{aac.name}','ext':'m4a','vcodec':'none','acodec':'mp4a.40.2','abr':128,'tbr':128},
+                    {'format_id':'high','url':f'{base}/{best_aac.name}','ext':'m4a','vcodec':'none','acodec':'aac','abr':256,'tbr':256}],best_aac),
+            ]:
                 directory = root / label
                 directory.mkdir()
-                output = run([*common, '-f', selectors['MUSIC'], '-x', '--audio-format', 'm4a', '--audio-quality', '256K', '-P', str(directory), '-o', 'media.%(ext)s', '--print', 'after_move:%(filepath)j', '--', f'{base}/{filename}'])
+                metadata = {'id':'fixture','title':'Native AAC','extractor':'generic','webpage_url':f'{base}/{filename}','formats':formats}
+                output = run([*common,*music_arguments,'--load-info-json','-','-P',str(directory),'-o','media.%(ext)s','--print','after_move:%(filepath)j'],json.dumps(metadata).encode())
                 path = Path(json.loads(output))
                 codec = json.loads(run(['ffprobe', '-v', 'error', '-show_streams', '-of', 'json', str(path)]))['streams'][0]['codec_name']
                 assert codec == 'aac' and path.suffix == '.m4a'
                 run(['ffmpeg', '-v', 'error', '-i', str(path), '-f', 'null', '-'])
-                if label == 'aac-copy':
-                    assert packet_hashes(combined) == packet_hashes(path), 'native AAC packets were changed'
+                assert packet_hashes(expected) == packet_hashes(path), 'native AAC packets or selected source changed'
+
+            directory=root/'reject-opus-for-aac'
+            directory.mkdir()
+            metadata={'id':'fixture','title':'Opus only','extractor':'generic','webpage_url':f'{base}/{opus.name}',
+                      'formats':[{'format_id':'opus','url':f'{base}/{opus.name}','ext':'opus','vcodec':'none','acodec':'opus'}]}
+            rejected=subprocess.run([*common,*music_arguments,'--load-info-json','-','-P',str(directory)],input=json.dumps(metadata).encode(),capture_output=True)
+            assert rejected.returncode!=0 and not list(directory.iterdir()), 'native AAC silently converted another codec'
 
             def select_formats(formats, selector):
                 metadata = {'id': 'fixture', 'title': 'fixture', 'extractor': 'generic', 'webpage_url': f'{base}/source.mp4', 'formats': formats}

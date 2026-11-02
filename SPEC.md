@@ -20,9 +20,14 @@ operator outside the source repository.
 - DL-3: Search results expose titles and source links, pagination, result
   selection, and audio/video choices. Direct URLs expose the same format choice.
   Callback state must belong to the requesting user/chat/message and expire.
-- DL-4: Offer Opus voice playback and M4A music playback. Preserve existing Opus
-  for the voice choice and native AAC for M4A where available; otherwise convert
-  to the requested codec at high quality. Opus remains lossy. Use Telegram voice
+- DL-4: Offer Opus voice playback and source-native AAC music in M4A. Preserve
+  existing Opus; convert other source codecs to high-quality Opus when needed.
+  The AAC choice copies the best available source AAC without re-encoding or
+  bitrate presets; bitrate/channels depend on the source. Without usable AAC,
+  explain that Opus is the alternative. Never synthesize AAC from another codec.
+  Version the native-AAC cache policy so earlier converted music cannot hide
+  the change; preserve old state for rollback and pending accepted work.
+  Opus remains lossy. Use Telegram voice
   and audio messages respectively, with a meaningful source title, rather than
   document-only audio. MP4 video uses Telegram's video player; MKV remains a file.
   Show M4A music before the explicitly labeled Opus voice choice for both links
@@ -101,6 +106,13 @@ operator outside the source repository.
   query text, arbitrary URL paths, credentials, extractor CDN URLs/headers or
   raw subprocess/Telegram errors. Successful extraction with unavailable video
   formats is an explicit diagnostic outcome, not an unobserved silent path.
+  Active media work keeps Downloading and Sending rows together in the same
+  existing status message, with progress updates every3.5seconds. Use observed
+  bytes/known totals; distinguish estimates, pending work and indeterminate
+  totals. File-ID reuse must not pretend to transfer a file again. Keep byte
+  streams bounded and unbuffered, aggregate split downloads, and preserve work
+  when cosmetic edits fail. Progress edits must not stall child pipe draining
+  or uploads, and the updater ends before terminal success/failure status.
 - DL-12: Authorized photos and PNG/JPEG/WebP image documents can produce a short
   recognized-text preview through local CPU OCR. Acknowledge first, show actual
   queue/download/recognition stages, and share the existing media semaphore.

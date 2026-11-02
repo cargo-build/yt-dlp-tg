@@ -19,7 +19,7 @@ pub struct DirectoryLimit<'a> {
 
 /// Drain a child with bounded output; kill and reap its group on timeout. @req DL-8 DL-12
 pub async fn run(command: &mut Command, deadline: Duration, limit: usize) -> Result<Vec<u8>> {
-    run_inner(command, deadline, limit, None).await
+    run_inner(command, deadline, limit, None, None).await
 }
 
 /// Bound individual files and remux scratch while retaining child-group cleanup. @req DL-5 DL-8
@@ -28,8 +28,9 @@ pub async fn run_guarded(
     deadline: Duration,
     limit: usize,
     directory: DirectoryLimit<'_>,
+    observer: Option<&dyn Fn(&[u8])>,
 ) -> Result<Vec<u8>> {
-    run_inner(command, deadline, limit, Some(directory)).await
+    run_inner(command, deadline, limit, Some(directory), observer).await
 }
 
 async fn run_inner(
@@ -37,6 +38,7 @@ async fn run_inner(
     deadline: Duration,
     limit: usize,
     directory: Option<DirectoryLimit<'_>>,
+    observer: Option<&dyn Fn(&[u8])>,
 ) -> Result<Vec<u8>> {
     command
         .stdin(Stdio::null())
@@ -59,7 +61,11 @@ async fn run_inner(
         .stderr
         .take()
         .ok_or_else(|| Error::Process("subprocess stderr is unavailable".into()))?;
-    let collect = join3(child.wait(), read_pipe(stdout, limit), read_pipe(stderr, 0));
+    let collect = join3(
+        child.wait(),
+        read_pipe(stdout, limit, observer),
+        read_pipe(stderr, 0, None),
+    );
     let collect = std::pin::pin!(collect);
     let stop = async {
         let watch = async {
@@ -159,15 +165,58 @@ fn kill_group(process_id: i32) -> io::Result<()> {
     }
 }
 
-async fn read_pipe(mut reader: impl AsyncRead, limit: usize) -> io::Result<(Vec<u8>, bool)> {
+struct Lines<'a> {
+    observer: &'a dyn Fn(&[u8]),
+    pending: Vec<u8>,
+    dropping: bool,
+}
+
+impl<'a> Lines<'a> {
+    fn new(observer: &'a dyn Fn(&[u8])) -> Self {
+        Self { observer, pending: Vec::new(), dropping: false }
+    }
+
+    fn push(&mut self, bytes: &[u8]) {
+        bytes.iter().for_each(|byte| match byte {
+            b'\n' => {
+                self.finish();
+                self.dropping = false;
+            }
+            _ if self.dropping => {}
+            _ if self.pending.len() < 1024 => self.pending.push(*byte),
+            _ => {
+                self.pending.clear();
+                self.dropping = true;
+            }
+        });
+    }
+
+    fn finish(&mut self) {
+        if !self.dropping && !self.pending.is_empty() {
+            (self.observer)(self.pending.strip_suffix(b"\r").unwrap_or(&self.pending));
+        }
+        self.pending.clear();
+    }
+}
+
+async fn read_pipe(
+    mut reader: impl AsyncRead,
+    limit: usize,
+    observer: Option<&dyn Fn(&[u8])>,
+) -> io::Result<(Vec<u8>, bool)> {
     let mut output = Vec::new();
     let mut overflow = false;
+    let mut lines = observer.map(Lines::new);
     loop {
         let BufResult(read, buffer) = reader.read([0_u8; 8192]).await;
         let read = read?;
         match read {
-            0 => return Ok((output, overflow)),
+            0 => {
+                if let Some(lines) = &mut lines { lines.finish(); }
+                return Ok((output, overflow));
+            }
             _ => {
+                if let Some(lines) = &mut lines { lines.push(&buffer[..read]); }
                 let kept = read.min(limit.saturating_sub(output.len()));
                 output.extend_from_slice(&buffer[..kept]);
                 overflow |= kept < read;
@@ -196,7 +245,8 @@ mod tests {
                     path: directory.path(),
                     file_bytes: 64,
                     total_bytes: 192
-                }
+                },
+                None,
             )
             .await,
             Err(Error::TooLarge)
@@ -231,6 +281,7 @@ mod tests {
                 file_bytes: 1024,
                 total_bytes: 3072,
             },
+            None,
         )
         .await
         .expect("valid temporary copies fit the disk budget");
@@ -250,6 +301,30 @@ mod tests {
             ),
             "room for extraction inputs must not increase the aggregate budget"
         );
+    }
+
+    #[compio::test]
+    async fn observes_bounded_stdout_lines_before_child_exit_without_exposing_stderr() {
+        use std::cell::RefCell;
+        let directory = tempfile::tempdir().expect("private child fixture");
+        let lines = RefCell::new(Vec::new());
+        let marker = directory.path().join("continue");
+        let observe = |line: &[u8]| {
+            lines.borrow_mut().push(line.to_vec());
+            if line == b"frame|1" { std::fs::write(&marker, b"continue").expect("release fixture"); }
+        };
+        let mut command = Command::new("python3");
+        command.args(["-c", "import sys,time,pathlib; print('frame|1',flush=True)\nwhile not pathlib.Path(sys.argv[1]).exists(): time.sleep(.01)\nprint('x'*2048); sys.stderr.write('private\\n'); print(chr(34)+'/tmp/media.m4a'+chr(34))"]).arg(&marker);
+        let output = run_guarded(
+            &mut command,
+            Duration::from_secs(3),
+            4096,
+            DirectoryLimit { path: directory.path(), file_bytes: 4096, total_bytes: 4096 },
+            Some(&observe),
+        ).await.expect("observer releases child before its deadline");
+        assert_eq!(lines.borrow().first(), Some(&b"frame|1".to_vec()));
+        assert!(output.ends_with(b"\"/tmp/media.m4a\"\n"));
+        assert_eq!(lines.borrow().len(), 2, "oversized line and stderr are excluded");
     }
 
     #[compio::test]

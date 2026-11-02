@@ -1,6 +1,8 @@
 //! Typed Telegram delivery and durable reuse of successful uploads. @req DL-4 DL-9
 
-use std::path::Path;
+use std::{future::Future, path::Path, time::{Duration, Instant}};
+
+use futures_util::future::{Either, select};
 
 use teloxide::{
     Bot, RequestError,
@@ -19,6 +21,8 @@ use crate::{
     error::{Error, Result},
     i18n::{Language, Text},
     media::{self, Format, Media},
+    progress::Progress,
+    upload,
 };
 
 pub struct Request<'a> {
@@ -47,21 +51,14 @@ pub async fn deliver(
                 "cached media type does not match requested output".into(),
             ));
         }
-        progress(
-            bot,
-            request.chat,
-            request.status,
-            request.language,
-            Text::Sending,
-        )
-        .await;
-        match send_typed(
+        let feedback = Progress::cached();
+        match tracked(bot, request.chat, request.status, request.language, &feedback, send_typed(
             bot,
             request.chat,
             &cached.kind,
             InputFile::file_id(FileId(cached.file_id)),
             &request.media.title,
-        )
+        ))
         .await
         {
             Ok(_) => {
@@ -75,35 +72,31 @@ pub async fn deliver(
             Err(_) => return Err(Error::Telegram("cached media send failed".into())),
         }
     }
-    progress(
-        bot,
-        request.chat,
-        request.status,
-        request.language,
-        Text::Downloading,
-    )
-    .await;
+    let total = match &request.format {
+        Format::Video { selection, .. } => Some(selection.size),
+        Format::Opus | Format::M4a => None,
+    };
+    let feedback = Progress::new(total);
     let directory = config
         .download_dir
         .join(format!("job-{:016x}", rand::random::<u64>()));
     let result = async {
         compio::fs::create_dir_all(&config.download_dir).await?;
         compio::fs::create_dir(&directory).await?;
-        let path = media::download(config, request.media, &request.format, &directory).await?;
-        if compio::fs::metadata(&path).await?.len() > config.max_upload_bytes {
+        let observe = |line: &[u8]| feedback.observe(line);
+        let path = tracked(bot, request.chat, request.status, request.language, &feedback,
+            media::download(config, request.media, &request.format, &directory, &observe)).await?;
+        feedback.download_finished();
+        let size = compio::fs::metadata(&path).await?.len();
+        if size > config.max_upload_bytes {
             return Err(Error::TooLarge);
         }
         let (kind, extension) = upload_kind(&request.format, &path)?;
-        let file = InputFile::file(path).file_name(upload_name(&request.media.title, extension));
-        progress(
-            bot,
-            request.chat,
-            request.status,
-            request.language,
-            Text::Sending,
-        )
-        .await;
-        let sent = send_typed(bot, request.chat, &kind, file, &request.media.title)
+        feedback.sending(Some(size));
+        let file = InputFile::read(upload::counted(compio::fs::File::open(&path).await?, feedback.clone()))
+            .file_name(upload_name(&request.media.title, extension));
+        let sent = tracked(bot, request.chat, request.status, request.language, &feedback,
+            send_typed(bot, request.chat, &kind, file, &request.media.title))
             .await
             .map_err(|_| Error::Telegram("media upload failed".into()))?;
         let cached = response_file(&sent, kind)?;
@@ -139,10 +132,50 @@ pub(crate) async fn progress(
     }
 }
 
+/// Poll media work during cosmetic edits and finish pending edits before terminal UI. @req DL-11 DL-14
+async fn tracked<F: Future>(
+    bot: &Bot,
+    chat: ChatId,
+    status: MessageId,
+    language: Language,
+    feedback: &Progress,
+    work: F,
+) -> F::Output {
+    let mut work = std::pin::pin!(work);
+    let mut next = Instant::now();
+    let mut previous = None;
+    loop {
+        let tick = compio::time::sleep(next.saturating_duration_since(Instant::now()));
+        match select(work.as_mut(), std::pin::pin!(tick)).await {
+            Either::Left((output, _)) => return output,
+            Either::Right(_) => {}
+        }
+        next = Instant::now() + Duration::from_millis(3500);
+        let text = feedback.render(language);
+        if previous.as_ref() == Some(&text) { continue; }
+        previous = Some(text.clone());
+        let edit = async {
+            compio::time::timeout(Duration::from_secs(2), async {
+                bot.edit_message_text(chat, status, text)
+                    .reply_markup(InlineKeyboardMarkup::default()).await
+            }).await.is_ok_and(|result| result.is_ok())
+        };
+        let edit = std::pin::pin!(edit);
+        let succeeded = match select(work.as_mut(), edit).await {
+            Either::Left((output, edit)) => {
+                if !edit.await && feedback.warn_once() { tracing::warn!("Cannot update media progress"); }
+                return output;
+            }
+            Either::Right((succeeded, _)) => succeeded,
+        };
+        if !succeeded && feedback.warn_once() { tracing::warn!("Cannot update media progress"); }
+    }
+}
+
 pub(crate) fn variant(format: &Format) -> String {
     match format {
         Format::Opus => "voice-opus-cover-v2".into(),
-        Format::M4a => "music-m4a-v1".into(),
+        Format::M4a => "music-native-aac-v2".into(),
         Format::Video { height, .. } => format!("video-{height}p-v2"),
     }
 }
@@ -284,7 +317,7 @@ mod tests {
         assert_ne!(variant(&video(720)), variant(&video(1080)));
         assert_ne!(variant(&video(1080)), "video-1080-v1");
         assert_ne!(variant(&Format::Opus), "voice-opus-v1");
-        assert_eq!(variant(&Format::M4a), "music-m4a-v1");
+        assert_eq!(variant(&Format::M4a), "music-native-aac-v2");
     }
 
     #[test]

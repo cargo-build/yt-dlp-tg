@@ -53,7 +53,7 @@ elif '--dump-single-json' in a:
         print(json.dumps({'_type':'playlist','entries':entries}))
     else:
         formats = [
-            {'format_id':'a','vcodec':'none','acodec':'mp4a','filesize':1000000},
+            {'format_id':'a','vcodec':'none','acodec':'mp4a.40.2','filesize':1000000},
             {'format_id':'v1080','height':1080,'vcodec':'avc1','acodec':'none','filesize':80000000},
             {'format_id':'v720','height':720,'vcodec':'avc1','acodec':'none','filesize':4000000},
             {'format_id':'v480','height':480,'vcodec':'avc1','acodec':'none','filesize':2000000},
@@ -63,8 +63,10 @@ elif '--dump-single-json' in a:
         if operand.endswith('/no-formats'): formats = []
         if operand.endswith('/header-sizes'):
             origin = os.environ['FAKE_HEADER_ORIGIN']
-            formats = [{'format_id':'a','vcodec':'none','acodec':'mp4a','protocol':'http','url':origin+'/probe/audio'}]
+            formats = [{'format_id':'a','vcodec':'none','acodec':'mp4a.40.2','protocol':'http','url':origin+'/probe/audio'}]
             formats += [{'format_id':'v'+str(height),'height':height,'vcodec':'avc1','acodec':'none','protocol':'http','url':origin+'/probe/'+kind} for height,kind in [(640,'video'),(720,'partial'),(1080,'compressed'),(480,'missing'),(360,'error'),(240,'html')]]
+        if operand.endswith('/opus-only'):
+            formats = [{'format_id':'opus','vcodec':'none','acodec':'opus','filesize':10000}]
         metadata = {'title':'Direct media','webpage_url':operand,'formats':formats}
         if operand.endswith('/header-sizes'): metadata['http_headers'] = {'Referer':'https://fixture.invalid/'}
         if urllib.parse.urlparse(operand).hostname in ('youtu.be','www.youtube.com','m.youtube.com','music.youtube.com'):
@@ -73,7 +75,17 @@ elif '--dump-single-json' in a:
 else:
     directory = pathlib.Path(a[a.index('--paths')+1])
     ext = a[a.index('--audio-format')+1] if '--extract-audio' in a else ('mkv' if 'mkv' in a[-1] else 'mp4')
+    if ext == 'best': ext = 'm4a'
     path = directory / ('media.'+ext)
+    if a[-1].endswith('/slow-progress'):
+        total = 8*1024*1024
+        with path.open('wb') as file:
+            for i in range(16):
+                file.write(b'x'*(total//16)); file.flush()
+                print(f'yt-dlp-tg-progress1|audio|downloading|{(i+1)*total//16}|{total}|NA',flush=True)
+                time.sleep(.4)
+        print(f'yt-dlp-tg-progress1|audio|finished|NA|{total}|NA',flush=True)
+        print(json.dumps(str(path))); sys.exit(0)
     if a[-1].endswith('/combined-audio'):
         combined = directory / 'unknown-size-input.part'
         with combined.open('wb') as file:
@@ -86,7 +98,9 @@ else:
             for i in range(120):
                 file.write(b'x'*1024*1024); file.flush(); time.sleep(.01)
         print(json.dumps(str(path))); sys.exit(0)
-    path.write_bytes(b'fixture media content')
+    path.write_bytes(b'not-aac' if a[-1].endswith('/aac-mismatch') else b'fixture media content')
+    if '--progress' in a:
+        print(f'yt-dlp-tg-progress1|audio|finished|NA|{path.stat().st_size}|NA')
     print(json.dumps(str(path)))
 '''
 
@@ -147,6 +161,9 @@ class Telegram(http.server.BaseHTTPRequestHandler):
                     self.rfile.readline()
                     break
                 chunks.append(self.rfile.read(size))
+                if self.server.state.get('slow_upload') and self.path.lower().endswith('/sendaudio'):
+                    self.server.state['upload_read_bytes'] = self.server.state.get('upload_read_bytes',0)+size
+                    time.sleep(.07)
                 self.rfile.read(2)
             body = b''.join(chunks)
         else:
@@ -185,8 +202,11 @@ class Telegram(http.server.BaseHTTPRequestHandler):
             result = {'id': 1000, 'is_bot': True, 'first_name': 'Fixture', 'username': 'fixture_bot', 'can_join_groups': True, 'can_read_all_group_messages': False, 'supports_inline_queries': False, 'has_main_web_app': False}
         elif method in ('sendmessage', 'editmessagetext', 'senddocument', 'sendvoice', 'sendaudio', 'sendvideo'):
             with state['condition']:
-                if method == 'editmessagetext' and payload.get('text') in state.get('reject_progress', set()):
-                    state.setdefault('progress_rejections', []).append(payload['text'])
+                if method=='editmessagetext' and '⏱' in payload.get('text',''):
+                    state.setdefault('progress_times',[]).append((time.monotonic(),payload['text'],payload['message_id'],state.get('upload_read_bytes',0)))
+                rejected = [text for text in state.get('reject_progress', set()) if text in payload.get('text','')]
+                if method == 'editmessagetext' and rejected:
+                    state.setdefault('progress_rejections', []).extend(rejected)
                     state['condition'].notify_all()
                     response = json.dumps({'ok':False,'error_code':400,'description':'Bad Request: message to edit not found'}).encode()
                     self.send_response(400)
@@ -262,7 +282,7 @@ class Telegram(http.server.BaseHTTPRequestHandler):
             pass
 
 
-def smoke(binary, mode, startup_stop=False, images=False, vision=False, queue_env=None, broker_control=None, status_only=False, public_access=False):
+def smoke(binary, mode, startup_stop=False, images=False, vision=False, queue_env=None, broker_control=None, status_only=False, public_access=False, progress_only=False):
     state = {'condition': threading.Condition(), 'updates': [], 'events': [], 'sequence': 100, 'webhook': None, 'delay_setup': startup_stop, 'setup_started': threading.Event(), 'release_setup': threading.Event(), 'files': {}, 'uploads': 0, 'reject': {}, 'rejections': 0}
     state['reject_duplicate_edits'] = vision
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Telegram)
@@ -274,10 +294,14 @@ def smoke(binary, mode, startup_stop=False, images=False, vision=False, queue_en
         fixture = root / 'yt-dlp'
         fixture.write_text(FAKE_YTDLP)
         fixture.chmod(0o700)
+        ffprobe = root / 'ffprobe'
+        ffprobe.write_text("#!/usr/bin/env python3\nimport json,pathlib,sys\ncodec='mp3' if pathlib.Path(sys.argv[-1]).read_bytes()==b'not-aac' else 'aac'\nprint(json.dumps({'streams':[{'codec_type':'audio','codec_name':codec}]}))\n")
+        ffprobe.chmod(0o700)
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             webhook_port = sock.getsockname()[1]
         env = {**os.environ, 'BOT_TOKEN': '1000:fixture', 'ALLOWED_USER_IDS': '42,7', 'TG_API_BASE': f'http://127.0.0.1:{server.server_port}', 'YTDLP_PATH': str(fixture), 'DOWNLOAD_DIR': str(root / 'jobs'), 'MODE': mode, 'LISTEN_ADDR': f'127.0.0.1:{webhook_port}', 'WEBHOOK_PUBLIC_URL': 'https://fixture.invalid', 'NO_PROXY': '127.0.0.1,localhost'}
+        env['PATH'] = str(root)+os.pathsep+env['PATH']
         if public_access:
             env['ALLOWED_USER_IDS'] = 'all'
         env['FAKE_HEADER_ORIGIN'] = f'http://127.0.0.1:{server.server_port}'
@@ -336,7 +360,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
             update_id = 1
 
             def wait(method, predicate=lambda p: True):
-                deadline = time.monotonic() + 15
+                deadline = time.monotonic() + (45 if progress_only else 15)
                 with state['condition']:
                     while time.monotonic() < deadline:
                         for index, event in enumerate(state['events']):
@@ -404,6 +428,9 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                 path = root / 'downloads.jsonl'
                 return len(path.read_text().splitlines()) if path.exists() else 0
 
+            def active(payload, phase):
+                return '▶ '+phase in payload.get('text','').splitlines()
+
             def choose(url, action):
                 message(url)
                 chosen = menu()
@@ -414,6 +441,39 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                 return chosen
 
             try:
+                if progress_only:
+                    state['slow_upload'] = True
+                    choose('https://media.invalid/slow-progress','m')
+                    wait('editmessagetext', lambda p: active(p,'Downloading…'))
+                    wait('sendaudio')
+                    wait('editmessagetext',lambda p:p.get('text')=='Sent.')
+                    events = [event for event in state['events'] if event[0]=='editmessagetext' and '⏱' in event[1].get('text','')]
+                    assert events, 'no combined progress updates'
+                    assert all('Downloading…' in event[1]['text'] and 'Sending…' in event[1]['text'] for event in events)
+                    assert len({event[1]['message_id'] for event in events})==1, 'progress created another status message'
+                    sends = [event[1]['text'] for event in events if active(event[1],'Sending…')]
+                    percents = [int(re.search(r'(\d+)%',text.split('▶ Sending…',1)[1])[1]) for text in sends if '%' in text.split('▶ Sending…',1)[1]]
+                    assert any(0<value<100 for value in percents) and len(set(percents))>=2, 'upload did not stream measured progress'
+                    cadence=[]
+                    for previous,current in zip(state['progress_times'],state['progress_times'][1:]):
+                        old_phase='sending' if '▶ Sending…' in previous[1] else 'downloading'
+                        phase='sending' if '▶ Sending…' in current[1] else 'downloading'
+                        if old_phase==phase:
+                            cadence.append(current[0]-previous[0])
+                    assert cadence and all(2.75<=delta<=4.75 for delta in cadence), cadence
+                    assert state['uploads']==downloads()==1
+                    for url in ('opus-only','aac-mismatch'):
+                        choose('https://media.invalid/'+url,'m')
+                        alternative=menu()
+                        assert 'Native AAC is unavailable' in alternative[1]['text']
+                        press(alternative,'a',id=7)
+                        wait('answercallbackquery',lambda p:'expired' in p.get('text',''))
+                        press(alternative,'a')
+                        wait('sendvoice')
+                        wait('editmessagetext',lambda p:p.get('text')=='Sent.')
+                    process.send_signal(signal.SIGTERM); assert process.wait(timeout=10)==0
+                    print(f'{mode}: one-message measured progress and owned native-AAC/Opus fallback passed')
+                    return
                 if public_access:
                     message('/start', id=99, chat=99)
                     assert 'Send a video link' in wait('sendmessage', lambda p: p.get('chat_id') == 99)[1]['text']
@@ -722,38 +782,38 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                 press(page2, 'r')
                 formats = menu()
                 press(formats, 'a')
-                wait('editmessagetext', lambda p: p.get('text') == 'Downloading…')
+                wait('editmessagetext', lambda p: active(p, 'Downloading…'))
                 uploaded = wait('sendvoice')
                 wait('editmessagetext', lambda p: p.get('text') == 'Sent.' and p.get('message_id') == formats[2]['message_id'])
                 assert b'.ogg"' in uploaded[3]
                 assert 'voice' in uploaded[2]
                 before = downloads()
                 choose('https://media.invalid/track6', 'a')
-                wait('editmessagetext', lambda p: p.get('text') == 'Sending…')
+                wait('editmessagetext', lambda p: active(p, 'Sending…'))
                 reused = wait('sendvoice')
                 assert reused[1]['voice'] == uploaded[2]['voice']['file_id']
                 assert downloads() == before, 'cache hit downloaded audio again'
 
                 choose('https://media.invalid/music', 'm')
-                wait('editmessagetext', lambda p: p.get('text') == 'Downloading…')
+                wait('editmessagetext', lambda p: active(p, 'Downloading…'))
                 music = wait('sendaudio')
                 assert b'.m4a"' in music[3]
                 assert music[1]['title'] == 'Direct media'
                 assert downloads() == before + 1
                 state['reject'][music[2]['audio']['file_id']] = 'invalid'
                 choose('https://media.invalid/music', 'm')
-                wait('editmessagetext', lambda p: p.get('text') == 'Sending…')
-                wait('editmessagetext', lambda p: p.get('text') == 'Downloading…')
+                wait('editmessagetext', lambda p: active(p, 'Sending…'))
+                wait('editmessagetext', lambda p: active(p, 'Downloading…'))
                 recovered = wait('sendaudio')
                 assert downloads() == before + 2 and state['rejections'] == 1
                 assert recovered[2]['audio']['file_id'] != music[2]['audio']['file_id']
                 state['reject'][recovered[2]['audio']['file_id']] = 'auth'
                 choose('https://media.invalid/music', 'm')
-                wait('editmessagetext', lambda p: p.get('text') == 'Sending…')
+                wait('editmessagetext', lambda p: active(p, 'Sending…'))
                 wait('editmessagetext', lambda p: p.get('text') == 'The request failed. Try another link or search query.')
                 assert downloads() == before + 2, 'auth failure triggered a download'
                 choose('https://media.invalid/music', 'm')
-                wait('editmessagetext', lambda p: p.get('text') == 'Sending…')
+                wait('editmessagetext', lambda p: active(p, 'Sending…'))
                 assert wait('sendaudio')[1]['audio'] == recovered[2]['audio']['file_id']
                 assert downloads() == before + 2, 'auth failure evicted a valid cached ID'
                 for audio_action, method in [('a','sendvoice'),('m','sendaudio')]:
@@ -765,7 +825,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                 direct = menu()
                 assert 'Choose a format' in direct[1]['text']
                 audio_buttons = direct[1]['reply_markup']['inline_keyboard'][0]
-                assert 'M4A' in audio_buttons[0]['text'] and 'Opus' in audio_buttons[1]['text'], 'music must precede the explicitly labeled voice choice'
+                assert 'AAC' in audio_buttons[0]['text'] and 'Opus' in audio_buttons[1]['text'], 'native music must precede voice'
                 press(direct, 'v')
                 qualities = menu()
                 assert any('1080p' in button['text'] and 'unavailable' in button['text'] and '>50' in button['text'] for row in qualities[1]['reply_markup']['inline_keyboard'] for button in row)
@@ -779,14 +839,14 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                 wait('answercallbackquery', lambda p: 'expired' in p.get('text',''))
                 assert (root/'calls.jsonl').read_text() == before_choices and downloads() == before_downloads
                 pick_video(qualities, 720)
-                wait('editmessagetext', lambda p: p.get('text') == 'Downloading…')
+                wait('editmessagetext', lambda p: active(p, 'Downloading…'))
                 video = wait('sendvideo')
                 assert '[format_id=v720][height=720]' in json.loads((root/'downloads.jsonl').read_text().splitlines()[-1])[json.loads((root/'downloads.jsonl').read_text().splitlines()[-1]).index('--format')+1]
                 assert b'.mp4"' in video[3]
                 assert video[1]['supports_streaming'] is True or video[1]['supports_streaming'] == 'true'
                 before = downloads()
                 choose('https://media.invalid/direct', 'v')
-                wait('editmessagetext', lambda p: p.get('text') == 'Sending…')
+                wait('editmessagetext', lambda p: active(p, 'Sending…'))
                 assert wait('sendvideo')[1]['video'] == video[2]['video']['file_id']
                 assert downloads() == before
                 message('https://media.invalid/direct')
@@ -812,7 +872,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                 wait('sendaudio')
                 wait('editmessagetext', lambda p: p.get('text') == 'Sent.')
                 choose('https://media.invalid/movie.mkv', 'v')
-                wait('editmessagetext', lambda p: p.get('text') == 'Downloading…')
+                wait('editmessagetext', lambda p: active(p, 'Downloading…'))
                 assert b'.mkv"' in wait('senddocument')[3]
 
                 before = downloads()
@@ -825,7 +885,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                 gate.write_text('hold first download')
                 try:
                     press(menu42, 'm')
-                    wait('editmessagetext', lambda p: p.get('text') == 'Downloading…' and p.get('message_id') == menu42[2]['message_id'])
+                    wait('editmessagetext', lambda p: active(p, 'Downloading…') and p.get('message_id') == menu42[2]['message_id'])
                     deadline = time.monotonic() + 10
                     while not (root/'youtube-started').exists() and time.monotonic() < deadline:
                         time.sleep(.02)
@@ -858,7 +918,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                 state['webhook'] = None
                 process = subprocess.Popen([binary], env=env, stdout=log, stderr=log)
                 choose('https://media.invalid/music', 'm')
-                wait('editmessagetext', lambda p: p.get('text') == 'Sending…')
+                wait('editmessagetext', lambda p: active(p, 'Sending…'))
                 assert wait('sendaudio')[1]['audio'] == recovered[2]['audio']['file_id']
                 assert downloads() == before, 'service restart lost the reusable ID'
                 choose('https://music.youtube.com/watch?v=dQw4w9WgXcQ&feature=share', 'm')
@@ -878,6 +938,9 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
 if __name__ == '__main__':
     binary = str(Path(sys.argv[1] if len(sys.argv) > 1 else 'target/debug/yt-dlp-tg').resolve())
     for mode in ('polling', 'webhook'):
+        if '--progress-only' in sys.argv:
+            smoke(binary, mode, progress_only=True)
+            continue
         if '--images-only' in sys.argv:
             smoke(binary, mode, images=True)
             smoke(binary, mode, vision=True)

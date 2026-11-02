@@ -12,7 +12,8 @@ Iggy queue. See [SPEC.md](SPEC.md) for the behavior contract.
 - Send text to search YouTube, or a URL for extraction through installed yt-dlp
   providers. Failed URL extraction falls back to search. Source/result menus
   have pagination; every result shows its source link.
-- M4A music prefers native AAC, otherwise converts at256kbit/s. Opus voice copies
+- M4A music copies the best available native AAC without re-encoding or bitrate
+  presets. Sources without AAC offer an explicit Opus alternative. Opus voice copies
   native Opus or converts other codecs at high quality. Opus is lossy and uses
   Telegram's voice player. Its selected-video thumbnail is embedded in the file
   when available; Telegram may still show a waveform.
@@ -23,13 +24,17 @@ Iggy queue. See [SPEC.md](SPEC.md) for the behavior contract.
   aliases share a video identity. One media slot covers cache lookup through
   committed result storage, so concurrent requests share one successful cold
   download/upload and subsequent recipients receive the stored file ID.
+- One status message shows Downloading and Sending together, with3500ms progress
+  updates, measured bytes or honest indeterminate bars, and explicit cache reuse.
+  Upload counters measure bytes handed to the request body; completion still
+  waits for Telegram's response. Cosmetic edit failures do not cancel media work.
 - Optional image recognition keeps artist/title separate, searches for a matching
   video and offers download/correction controls. The selected MCP model, prompt,
   schema and messages live in [configuration](config/track-vision/README.md).
   Local CPU OCR is an explicit alternative; recognition never downloads media
   before a format button is pressed.
 - English, Chinese, Hindi, Spanish, Arabic, French, Portuguese and Russian UI.
-  Downloads require an explicit allowlist. `/id` returns the caller's numeric
+  Downloads use an explicit allowlist or `ALLOWED_USER_IDS=all`. `/id` returns the caller's numeric
   ID without download permission; `/start`, `/help` and `/search` are supported.
 
 ## Requirements and running
