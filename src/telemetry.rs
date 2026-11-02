@@ -1,6 +1,9 @@
 //! Correlated diagnostics with explicit source and error redaction. @req DL-8 DL-11
 
-use crate::{error::Error, video::{Availability, Choice}};
+use crate::{
+    error::Error,
+    video::{Availability, Choice},
+};
 
 /// Preserve known video identities; unknown paths and share queries stay private. @req DL-8 DL-11
 pub fn source(value: &str) -> Option<String> {
@@ -8,7 +11,11 @@ pub fn source(value: &str) -> Option<String> {
     if !matches!(url.scheme(), "http" | "https") {
         return None;
     }
-    let segments: Vec<_> = url.path().split('/').filter(|part| !part.is_empty()).collect();
+    let segments: Vec<_> = url
+        .path()
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
     let identity = match url.host_str()? {
         "youtube.com" | "www.youtube.com" | "m.youtube.com" | "music.youtube.com" => {
             match segments.as_slice() {
@@ -51,7 +58,9 @@ pub fn source(value: &str) -> Option<String> {
 
 fn identifier(value: &str) -> bool {
     (1..=64).contains(&value.len())
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 /// Categorize failures without formatting their credential-bearing payloads. @req DL-8 DL-11
@@ -95,13 +104,34 @@ mod tests {
     #[test]
     fn source_diagnostics_keep_media_identity_without_private_url_components() {
         [
-            ("https://www.instagram.com/reel/Fixture_123/?tracking=PRIVATE#PRIVATE", "https://www.instagram.com/reel/Fixture_123/"),
-            ("https://youtu.be/dQw4w9WgXcQ?tracking=PRIVATE", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
-            ("https://www.youtube.com/watch?v=dQw4w9WgXcQ&token=PRIVATE", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
-            ("https://user:PRIVATE@media.invalid/PRIVATE/file?key=PRIVATE#PRIVATE", "https://media.invalid/"),
-            ("https://api.telegram.org/bot123:PRIVATE/method", "https://api.telegram.org/"),
-            ("https://www.instagram.com/PRIVATE/profile", "https://www.instagram.com/"),
-            ("https://www.instagram.com/reel/has%3Asecret/", "https://www.instagram.com/"),
+            (
+                "https://www.instagram.com/reel/Fixture_123/?tracking=PRIVATE#PRIVATE",
+                "https://www.instagram.com/reel/Fixture_123/",
+            ),
+            (
+                "https://youtu.be/dQw4w9WgXcQ?tracking=PRIVATE",
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            ),
+            (
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ&token=PRIVATE",
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            ),
+            (
+                "https://user:PRIVATE@media.invalid/PRIVATE/file?key=PRIVATE#PRIVATE",
+                "https://media.invalid/",
+            ),
+            (
+                "https://api.telegram.org/bot123:PRIVATE/method",
+                "https://api.telegram.org/",
+            ),
+            (
+                "https://www.instagram.com/PRIVATE/profile",
+                "https://www.instagram.com/",
+            ),
+            (
+                "https://www.instagram.com/reel/has%3Asecret/",
+                "https://www.instagram.com/",
+            ),
         ]
         .into_iter()
         .for_each(|(input, expected)| assert_eq!(source(input).as_deref(), Some(expected)));

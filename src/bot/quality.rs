@@ -185,7 +185,10 @@ pub(super) fn blocked(session: &Session, action: char, index: usize, limit: u64)
         Some(Choice {
             availability: Availability::Unknown,
             ..
-        }) => (session.language.text(Text::VideoSizeUnknown), "unknown_size"),
+        }) => (
+            session.language.text(Text::VideoSizeUnknown),
+            "unknown_size",
+        ),
         Some(Choice {
             availability: Availability::Missing,
             ..

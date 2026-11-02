@@ -467,8 +467,14 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                         assert any('stage="video_options"' in line and 'availability="'+availability+'"' in line for line in lines)
                     assert any('stage="video_selection"' in line and 'reason="unknown_size"' in line for line in lines)
                     requested = next(line for line in lines if 'stage="download"' in line)
-                    job = re.search(r'job_id=(\d+)', requested)[1]
-                    assert any('stage="delivery"' in line and 'outcome="sent"' in line and 'job_id='+job in line for line in lines)
+                    request = re.search(r'request_id=(\d+)', requested)[1]
+                    if queue_env:
+                        queued = next(line for line in lines if 'stage="queue"' in line and 'request_id='+request in line)
+                        job = re.search(r'job_id=([0-9a-f]+)', queued)[1]
+                        correlation = 'job_id='+job
+                    else:
+                        correlation = 'request_id='+request
+                    assert any('stage="delivery"' in line and 'outcome="sent"' in line and correlation in line for line in lines)
                     print(f'{mode}: public access/ownership/cache, safe header sizes and correlated redacted diagnostics passed')
                     return
                 if status_only:

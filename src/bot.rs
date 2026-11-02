@@ -8,6 +8,7 @@ use std::{
 };
 
 use futures_util::FutureExt;
+use tracing::Instrument;
 use teloxide::{
     Bot,
     dispatching::Dispatcher,
@@ -740,7 +741,6 @@ async fn callback(
         match &request {
             Ok(request) => tracing::info!(
                 request_id = session.id,
-                job_id = %request.id,
                 stage = "download",
                 outcome = "requested",
                 source = ?telemetry::source(&request.media.url),
@@ -760,7 +760,8 @@ async fn callback(
                     )
                     .await;
                     match queue.submit(request).await {
-                        Ok(Some(_)) => {}
+                        Ok(Some(job)) => tracing::info!(request_id = session.id, job_id = %job.id,
+                            stage = "queue", outcome = "accepted", "Media request"),
                         Ok(None) => {
                             session.status(&bot, Text::QueueFull).await?;
                         }
@@ -769,7 +770,9 @@ async fn callback(
                         }
                     }
                 }
-                None => deliver_request(&bot, &app, request).await,
+                None => deliver_request(&bot, &app, request)
+                    .instrument(tracing::info_span!("download_request", request_id = session.id))
+                    .await,
             },
             Err(_) => {
                 session.status(&bot, Text::Failed).await?;
@@ -840,7 +843,7 @@ async fn callback(
 
 /// Recheck persisted recipient and output authority before sharing the media slot. @req DL-1 DL-14
 async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
-    tracing::info!(job_id = %request.id, stage = "delivery", outcome = "started",
+    tracing::info!(stage = "delivery", outcome = "started",
         source = ?telemetry::source(&request.media.url), "Media request");
     let chat = ChatId(request.chat_id);
     let status = MessageId(request.status_message);
@@ -876,8 +879,12 @@ async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
     }
     .await;
     match &result {
-        Ok(()) => tracing::info!(job_id = %request.id, stage = "delivery", outcome = "sent", "Media request"),
-        Err(error) => tracing::warn!(job_id = %request.id, stage = "delivery", outcome = "failed", reason = telemetry::reason(error), "Media request"),
+        Ok(()) => {
+            tracing::info!(stage = "delivery", outcome = "sent", "Media request")
+        }
+        Err(error) => {
+            tracing::warn!(stage = "delivery", outcome = "failed", reason = telemetry::reason(error), "Media request")
+        }
     }
     let text = match result {
         Ok(()) => Text::Sent,

@@ -1,6 +1,7 @@
 //! Serial durable delivery with independent publishing and native liveness. @req DL-14
 
 use std::{cell::Cell, future::Future, rc::Rc, time::Duration};
+use tracing::Instrument;
 
 use crate::{
     broker::{Ack, Broker},
@@ -38,7 +39,7 @@ impl Queue {
         }
         let job = self.store.submit(request).await?;
         if let Some(job) = &job {
-            tracing::info!(request_id = %job.id, sequence = job.sequence, "Download request accepted");
+            tracing::info!(job_id = %job.id, sequence = job.sequence, "Download request accepted");
         }
         Ok(job)
     }
@@ -125,8 +126,10 @@ impl Queue {
                     if let Some(job) = self.store.get(id.clone()).await?
                         && job.state != State::Completed
                     {
-                        tracing::info!(request_id = %id, offset = message.offset(), "Processing queued download");
-                        handle(job.request).await;
+                        tracing::info!(job_id = %id, offset = message.offset(), "Processing queued download");
+                        handle(job.request)
+                            .instrument(tracing::info_span!("download_job", job_id = %id))
+                            .await;
                         self.store.complete(id.clone()).await?;
                     }
                 }
@@ -139,7 +142,7 @@ impl Queue {
                     let offset = message.offset();
                     if let Some(id) = message.request_id {
                         self.store.remove(id.clone()).await?;
-                        tracing::info!(request_id = %id, offset, "Download request acknowledged");
+                        tracing::info!(job_id = %id, offset, "Download request acknowledged");
                     }
                 }
                 Ack::Repoll => {}

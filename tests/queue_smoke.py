@@ -89,6 +89,7 @@ def main():
                     smoke(binary, mode, queue_env=queue_env, status_only=True)
                     continue
                 smoke(binary, mode, queue_env=queue_env, broker_control=broker)
+                smoke(binary, mode, queue_env=queue_env, public_access=True)
                 smoke(binary, mode, startup_stop=True, queue_env=queue_env)
                 smoke(binary, mode, queue_env=queue_env, status_only=True)
             if args.test_binary:
