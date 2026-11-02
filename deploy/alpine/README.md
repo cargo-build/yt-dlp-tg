@@ -13,7 +13,9 @@ qualified release at /opt/yt-dlp-tg/current. Copy yt-dlp-tg.conf privately to
 /etc/conf.d/yt-dlp-tg and set ALLOWED_USER_IDS there. The source template fails
 without an explicit numeric allowlist or `all` for public access. Provision the token as an owner-only file;
 protect state/log directories and preserve the existing cache during cutover.
-Install FFmpeg, Deno and matching yt-dlp/EJS dependencies. Optional image input
+Install FFmpeg/FFprobe with the libx264 encoder, AAC encoder and MP4 faststart
+support, Deno and matching yt-dlp/EJS dependencies. Qualify actual MP4 conversion
+on the target before cutover. Optional image input
 also needs Pillow and the configured backend's pinned dependencies.
 
 ## Optional local Iggy service

@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use crate::error::{Error, Result};
 
 /// Resolutions above this height are never offered. @req DL-5
-const MAX_HEIGHT: u32 = 1080;
+pub(crate) const MAX_HEIGHT: u32 = 1080;
 /// Menu heights always listed, even when the source lacks them. @req DL-5
 const STANDARD_HEIGHTS: [u32; 6] = [1080, 720, 480, 360, 240, 144];
 /// A kilobit is 125 bytes; yt-dlp reports bitrates in kbps.

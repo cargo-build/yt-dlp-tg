@@ -14,16 +14,14 @@ use crate::{
     config::Config,
     error::{Error, Result},
     process,
+    video::MAX_HEIGHT,
 };
-
-/// Pinned video height cap, shared with the selection planner. @req DL-5
-const MAX_HEIGHT: u32 = 1080;
 
 /// ffprobe stdout bound; stream metadata is small. @req DL-8
 const MAX_CHILD_STDOUT_BYTES: usize = 64 * 1024;
 
 /// Probe entries that decide stream handling and validate the final file. @req DL-4
-const PROBE_FIELDS: &str = "stream=index,codec_type,codec_name,pix_fmt,width,height,channels,color_transfer:stream_disposition=attached_pic:stream_side_data=side_data_type,rotation:format=format_name,duration";
+const PROBE_FIELDS: &str = "stream=index,codec_type,codec_name,pix_fmt,width,height,channels,color_transfer,color_primaries:stream_disposition=attached_pic:stream_side_data=side_data_type,rotation:format=format_name,duration";
 
 /// Side-data name carrying the display matrix that rotates the visible frame.
 const DISPLAY_MATRIX: &str = "Display Matrix";
@@ -42,7 +40,7 @@ const AUDIO_BITRATE: &str = "192k";
 const THREADS: &str = "1";
 
 /// Transfer characteristics that 8-bit yuv420p output would wash out. @req DL-4
-const HDR_TRANSFERS: [&str; 2] = ["smpte2084", "arib-std-b67"];
+const HDR_TRANSFERS: [&str; 5] = ["smpte2084", "arib-std-b67", "smpte428", "log100", "log316"];
 
 /// Names owned by the downloader's one-file job-directory invariant.
 const SOURCE_STEM: &str = "media";
@@ -69,6 +67,7 @@ const BLOCKING_FAILED: &str = "media normalization filesystem task failed";
 /// One probed media file; parsing proves it is finite media with one video. @req DL-4
 #[derive(Debug)]
 struct Probe {
+    duration: f64,
     /// ffprobe format name list, for example `mov,mp4,m4a,3gp,3g2,mj2`.
     container: String,
     video: VideoStream,
@@ -86,6 +85,7 @@ struct VideoStream {
     /// Display rotation in degrees; no display matrix is reported as none.
     rotation: i64,
     color_transfer: Option<String>,
+    color_primaries: Option<String>,
 }
 
 /// One audio stream with the channel count an encoded replacement must keep.
@@ -202,10 +202,10 @@ fn validate_video(video: &VideoStream, height: u32) -> Result<()> {
     if !video.width.is_multiple_of(2) || !video.height.is_multiple_of(2) {
         return Err(Error::YtDlp(VIDEO_SIZE.into()));
     }
-    if video
-        .color_transfer
-        .as_deref()
-        .is_some_and(|transfer| HDR_TRANSFERS.contains(&transfer))
+    let transfer = video.color_transfer.as_deref();
+    let unclassified_wide_gamut = video.color_primaries.as_deref() == Some("bt2020")
+        && matches!(transfer, None | Some("unknown" | "unspecified"));
+    if transfer.is_some_and(|transfer| HDR_TRANSFERS.contains(&transfer)) || unclassified_wide_gamut
     {
         return Err(Error::YtDlp(HDR_UNSUPPORTED.into()));
     }
@@ -223,6 +223,9 @@ fn display_dimensions(width: u32, height: u32, rotation: i64) -> Result<(u32, u3
 
 /// Require the normalized file to be the deliverable MP4 of the same picture. @req DL-4
 fn validate_output(input: &Probe, output: &Probe, height: u32) -> Result<()> {
+    if output.duration + 0.5 < input.duration {
+        return Err(Error::YtDlp(OUTPUT_INVALID.into()));
+    }
     if !output
         .container
         .split(',')
@@ -306,6 +309,7 @@ fn parse_probe(output: &[u8]) -> Result<Probe> {
         }
     }
     Ok(Probe {
+        duration,
         container,
         video: video.ok_or_else(probe_invalid)?,
         audio,
@@ -329,6 +333,7 @@ fn video_stream(stream: StreamDocument) -> Result<VideoStream> {
         height: positive(stream.height)?,
         rotation,
         color_transfer,
+        color_primaries: stream.color_primaries.filter(|value| !value.is_empty()),
     })
 }
 
@@ -400,6 +405,7 @@ struct StreamDocument {
     height: Option<u64>,
     channels: Option<u64>,
     color_transfer: Option<String>,
+    color_primaries: Option<String>,
     rotation: Option<i64>,
     disposition: Option<DispositionDocument>,
     #[serde(default)]
@@ -476,7 +482,11 @@ async fn run_conversion(
 
 /// Map the probed streams explicitly: no default selection, cover or subtitle. @req DL-4
 fn conversion_arguments(conversion: &Conversion<'_>) -> Vec<OsString> {
-    let mut arguments = ["-nostdin", "-n", "-v", "error", "-xerror", "-threads", THREADS, "-i"].map(OsString::from).to_vec();
+    let mut arguments = [
+        "-nostdin", "-n", "-v", "error", "-xerror", "-threads", THREADS, "-i",
+    ]
+    .map(OsString::from)
+    .to_vec();
     arguments.push(conversion.input.as_os_str().to_owned());
     map_stream(&mut arguments, conversion.video.index);
     for audio in conversion.audio {
@@ -661,6 +671,7 @@ mod tests {
             height,
             rotation: 0,
             color_transfer: Some("bt709".into()),
+            color_primaries: None,
         }
     }
 
@@ -674,6 +685,7 @@ mod tests {
 
     fn probe(container: &str, video: VideoStream, audio: Vec<AudioStream>) -> Probe {
         Probe {
+            duration: 1.0,
             container: container.into(),
             video,
             audio,
@@ -854,6 +866,9 @@ mod tests {
             )
         };
         validate_output(&source, &deliverable(), 960).expect("a matching normalized file");
+        let mut truncated = deliverable();
+        truncated.duration = 0.1;
+        rejected(validate_output(&source, &truncated, 960), OUTPUT_INVALID);
         rejected(
             validate_output(
                 &source,
@@ -924,6 +939,18 @@ mod tests {
             ),
             OUTPUT_INVALID,
         );
+    }
+
+    #[test]
+    fn unclassified_wide_gamut_is_rejected_before_lossy_conversion() {
+        let video = VideoStream {
+            color_primaries: Some("bt2020".into()),
+            color_transfer: None,
+            ..video_stream(540, 960)
+        };
+        rejected(validate_video(&video, 960), HDR_UNSUPPORTED);
+        let known_sdr = VideoStream { color_transfer: Some("bt2020-10".into()), ..video };
+        validate_video(&known_sdr, 960).expect("tagged SDR remains supported");
     }
 
     #[test]

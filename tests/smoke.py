@@ -510,7 +510,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                         before_uploads=state['uploads']
                         choose('https://media.invalid/'+key,'v',record['height'])
                         if record.get('rejected'):
-                            wait('editmessagetext',lambda p:p.get('text')=='Request failed. Try another link or query.')
+                            wait('editmessagetext',lambda p:p.get('text','').startswith('The request failed.'))
                             assert state['uploads']==before_uploads, 'unsupported video reached Telegram'
                             continue
                         delivered=wait('sendvideo')

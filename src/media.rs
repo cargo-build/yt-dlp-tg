@@ -345,7 +345,7 @@ pub(crate) async fn download(
     feedback: &progress::Progress,
 ) -> Result<PathBuf> {
     if let Format::Video { height, selection } = format {
-        if !(1..=1080).contains(height) {
+        if !(1..=video::MAX_HEIGHT).contains(height) {
             return Err(Error::YtDlp("invalid video height".into()));
         }
         if selection.size.bytes() > config.max_upload_bytes {
@@ -374,7 +374,7 @@ pub(crate) async fn download(
         Format::Opus | Format::M4a => total_bytes,
         Format::Video { .. } => config.max_upload_bytes,
     };
-    let deadline = Instant::now() + Duration::from_secs(config.download_timeout_secs);
+    let deadline = download_deadline(config.download_timeout_secs)?;
     let observe = |line: &[u8]| feedback.observe(line);
     let output = process::run_guarded(
         &mut command,
@@ -414,6 +414,11 @@ pub(crate) async fn download(
         return playable::ensure_playable(config, &directory, path, *height, deadline).await;
     }
     Ok(path)
+}
+
+fn download_deadline(seconds: u64) -> Result<Instant> {
+    Instant::now().checked_add(Duration::from_secs(seconds))
+        .ok_or_else(|| Error::Config("download timeout exceeds the platform clock range".into()))
 }
 
 fn native_aac(metadata: &serde_json::Value) -> bool {
@@ -1022,5 +1027,11 @@ mod tests {
                 .iter()
                 .any(|argument| argument == "--recode-video")
         );
+    }
+
+    #[test]
+    fn impossible_download_deadlines_fail_without_a_clock_panic() {
+        assert!(download_deadline(900).is_ok());
+        assert!(matches!(download_deadline(u64::MAX), Err(Error::Config(_))));
     }
 }

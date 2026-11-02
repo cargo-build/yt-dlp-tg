@@ -43,10 +43,15 @@ def verify_upload(source, event, record, root):
     assert len(videos)==1 and videos[0]['codec_name']=='h264'
     rotation=next((side.get('rotation',0) for side in videos[0].get('side_data_list',[]) if side.get('side_data_type')=='Display Matrix'),0)
     display_height=videos[0]['width'] if int(rotation)%180 else videos[0]['height']
-    assert videos[0]['pix_fmt']=='yuv420p' and display_height==record['height']
+    assert videos[0]['pix_fmt']=='yuv420p' and display_height==record['height'], (source.name, record['height'], display_height, videos[0]['pix_fmt'], rotation)
     assert all(stream['codec_name']=='aac' for stream in audios)
     assert bool(audios)==(record['audio']!='none'), 'source audio was dropped'
     run(['ffmpeg','-nostdin','-v','error','-threads','1','-i',str(output),'-f','null','-'])
+    if record.get('orientation'):
+        frames=[run(['ffmpeg','-nostdin','-v','error','-threads','1','-i',str(path),'-frames:v','1','-pix_fmt','rgb24','-f','rawvideo','-']) for path in (source,output)]
+        assert len(frames[0])==len(frames[1])
+        difference=sum(abs(left-right) for left,right in zip(*frames))/len(frames[0])
+        assert difference<15, ('visible orientation changed',source.name,difference)
     if record.get('video_copy'):
         assert packets(source,'v:0')==packets(output,'v:0'), 'compatible video was re-encoded'
     if record.get('audio_copy'):
@@ -64,18 +69,30 @@ def fixtures(root):
         return path
     h264=generate('h264.mp4')
     generate('vp9.mkv',video='libvpx-vp9')
+    generate('square-vp9.mkv',video='libvpx-vp9',size='144x144')
     generate('opus.mkv',video='libvpx-vp9',audio='libopus')
     generate('yuv444.mp4',pixels='yuv444p')
-    generate('hdr.mp4',extra=('-color_trc','smpte2084','-color_primaries','bt2020','-colorspace','bt2020nc'))
+    run(['ffmpeg','-nostdin','-v','error','-i',str(h264),'-c','copy','-bsf:v',
+         'h264_metadata=transfer_characteristics=16:colour_primaries=9:matrix_coefficients=9',str(root/'hdr.mp4')])
+    hdr=json.loads(run(['ffprobe','-v','error','-select_streams','v:0','-show_streams','-of','json',str(root/'hdr.mp4')]))
+    assert hdr['streams'][0].get('color_transfer')=='smpte2084', 'HDR fixture lacks transfer metadata'
     generate('wrongheight.mp4',size='256x180')
     run(['ffmpeg','-nostdin','-v','error','-i',str(h264),'-c','copy',str(root/'h264.mkv')])
-    run(['ffmpeg','-nostdin','-v','error','-i',str(h264),'-c','copy','-metadata:s:v:0','rotate=90',str(root/'rotated.mp4')])
+    run(['ffmpeg','-nostdin','-v','error','-display_rotation:v:0','90','-i',str(h264),'-c','copy',str(root/'rotated.mp4')])
+    rotated=json.loads(run(['ffprobe','-v','error','-select_streams','v:0','-show_streams','-of','json',str(root/'rotated.mp4')]))
+    assert any(int(side.get('rotation',0))%180 for side in rotated['streams'][0].get('side_data_list',[])), 'rotation fixture has no display matrix'
+    for source,name in [('vp9.mkv','rotated-vp9.mp4'),('square-vp9.mkv','rotated-square.mp4')]:
+        run(['ffmpeg','-nostdin','-v','error','-display_rotation:v:0','90','-i',str(root/source),'-c','copy',str(root/name)])
+        rotated=json.loads(run(['ffprobe','-v','error','-select_streams','v:0','-show_streams','-of','json',str(root/name)]))
+        assert any(int(side.get('rotation',0))%180 for side in rotated['streams'][0].get('side_data_list',[])), 'converted rotation fixture has no display matrix'
     run(['ffmpeg','-nostdin','-v','error','-i',str(root/'vp9.mkv'),'-an','-c:v','copy',str(root/'silent.mkv')])
     (root/'corrupt.mp4').write_bytes(b'invalid MP4 fixture')
     manifest={
         'h264.mp4':{'video':'h264','audio':'aac','video_copy':True,'audio_copy':True},
         'h264.mkv':{'video':'h264','audio':'aac','video_copy':True,'audio_copy':True},
-        'rotated.mp4':{'video':'h264','audio':'aac','video_copy':True,'audio_copy':True},
+        'rotated.mp4':{'video':'h264','audio':'aac','video_copy':True,'audio_copy':True,'orientation':True},
+        'rotated-vp9.mp4':{'video':'vp9','audio':'aac','audio_copy':True,'orientation':True},
+        'rotated-square.mp4':{'video':'vp9','audio':'aac','audio_copy':True,'orientation':True},
         'vp9.mkv':{'video':'vp9','audio':'aac','audio_copy':True},
         'opus.mkv':{'video':'vp9','audio':'opus'},
         'silent.mkv':{'video':'vp9','audio':'none'},
@@ -85,7 +102,7 @@ def fixtures(root):
         'corrupt.mp4':{'video':'h264','audio':'aac','rejected':True},
     }
     for name,record in manifest.items():
-        record.update(file=name,height=256 if name=='rotated.mp4' else 144)
+        record.update(file=name,height=256 if name in ('rotated.mp4','rotated-vp9.mp4') else 144)
     (root/'manifest.json').write_text(json.dumps(manifest))
 
 
