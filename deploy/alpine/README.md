@@ -18,6 +18,14 @@ support, Deno and matching yt-dlp/EJS dependencies. Qualify actual MP4 conversio
 on the target before cutover. Optional image input
 also needs Pillow and the configured backend's pinned dependencies.
 
+For transfer diagnostics keep the normal `RUST_LOG=yt_dlp_tg=info` filter;
+generic HTTP debug/trace logs can expose token-bearing URLs. Run the standard
+mock workflow plus `tests/smoke.py <binary> --progress-only` on the target before
+cutover. The latter verifies a throttled body, delayed API reply, measured
+application boundaries and cached reuse without another upload. Ring sampling
+needs no additional package or privilege and is best effort. See the project's
+Diagnostics section for field meanings and attribution limits.
+
 ## Optional local Iggy service
 
 Use the same source pin as Cargo.toml:

@@ -168,11 +168,14 @@ async fn metadata(config: &Config, url: &str) -> Result<Vec<u8>> {
     let url = http_url(url).ok_or_else(|| Error::YtDlp("invalid media URL".into()))?;
     let mut command = base_command(config);
     command.args(["--dump-single-json", "--skip-download", "--", &url]);
-    crate::telemetry::phase("metadata", process::run(
-        &mut command,
-        Duration::from_secs(config.process_timeout_secs),
-        MAX_STDOUT_BYTES,
-    ))
+    crate::telemetry::phase(
+        "metadata",
+        process::run(
+            &mut command,
+            Duration::from_secs(config.process_timeout_secs),
+            MAX_STDOUT_BYTES,
+        ),
+    )
     .await
 }
 
@@ -376,17 +379,20 @@ pub(crate) async fn download(
     };
     let deadline = download_deadline(config.download_timeout_secs)?;
     let observe = |line: &[u8]| feedback.observe(line);
-    let output = crate::telemetry::phase("source_download", process::run_guarded(
-        &mut command,
-        Duration::from_secs(config.download_timeout_secs),
-        MAX_STDOUT_BYTES,
-        process::DirectoryLimit {
-            path: &directory,
-            file_bytes,
-            total_bytes,
-        },
-        Some(&observe),
-    ))
+    let output = crate::telemetry::phase(
+        "source_download",
+        process::run_guarded(
+            &mut command,
+            Duration::from_secs(config.download_timeout_secs),
+            MAX_STDOUT_BYTES,
+            process::DirectoryLimit {
+                path: &directory,
+                file_bytes,
+                total_bytes,
+            },
+            Some(&observe),
+        ),
+    )
     .await?;
     let final_path = final_path(&output)?;
     let limit = config.max_upload_bytes;
@@ -411,8 +417,11 @@ pub(crate) async fn download(
     }
     if let Format::Video { height, .. } = format {
         feedback.preparing_video();
-        return crate::telemetry::phase("mp4_normalization",
-            playable::ensure_playable(config, &directory, path, *height, deadline)).await;
+        return crate::telemetry::phase(
+            "mp4_normalization",
+            playable::ensure_playable(config, &directory, path, *height, deadline),
+        )
+        .await;
     }
     Ok(path)
 }

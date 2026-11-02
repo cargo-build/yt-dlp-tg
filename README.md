@@ -99,6 +99,24 @@ request ID to connect intake to availability, then the job ID for delivery.
 even when extraction succeeded. These are service logs, not a metrics/alerting
 platform; protect and rotate them with the deployment's existing log controls.
 
+`transfer_phase` separates metadata, source download, MP4 preparation, cache,
+file open and slot wait. `upload_diagnostics` reports the actual file bytes
+read into the owned HTTP body, read-await time, gaps between reads, synchronous
+request-poll time, timer delay and time after the expected bytes were read.
+It reports completion/failure/cancellation, plus a sample after one second and
+every30seconds during long sends. No per-chunk logs or extra runtime is used.
+`ring_diagnostics` is a bounded, best-effort numeric snapshot of this process's
+Linux ring heads/tails, without raw fdinfo or addresses.
+
+Large `file_read_await_us` includes I/O completion and scheduling delay; large
+`body_gap_ms` means the consumer stopped asking for file bytes. Long polls or
+timer lag can indicate executor contention. `after_body_ms` still includes
+buffer draining, network transfer and API processing. Body bytes are not TCP
+acknowledgements, and these fields do not isolate TLS, socket writes or every
+kernel operation. Other runtime tasks can contribute; correlate with private
+host CPU/TCP observations before assigning a cause. A low-volume or cached send
+can finish without a timer/ring sample. Missing kernel fields remain unknown.
+
 ## Durable queue and data
 
 Iggy uses the matching pinned native broker/client and one persisted partition.

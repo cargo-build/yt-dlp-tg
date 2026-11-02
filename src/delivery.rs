@@ -70,9 +70,13 @@ pub async fn deliver(
             ),
         )
         .await;
-        tracing::info!(stage = "transfer_phase", component = "cached_send",
+        tracing::info!(
+            stage = "transfer_phase",
+            component = "cached_send",
             outcome = if reused.is_ok() { "ok" } else { "failed" },
-            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0, "Media component");
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "Media component"
+        );
         match reused {
             Ok(_) => {
                 tracing::info!(kind = ?cached.kind, "Reused Telegram media");
@@ -118,7 +122,10 @@ pub async fn deliver(
         }
         let (kind, extension) = upload_kind(&request.format, &path)?;
         feedback.sending(Some(size));
-        let opened = telemetry::phase("file_open", async { Ok(compio::fs::File::open(&path).await?) }).await?;
+        let opened = telemetry::phase("file_open", async {
+            Ok(compio::fs::File::open(&path).await?)
+        })
+        .await?;
         let diagnostics = Upload::new(size);
         let file = InputFile::read(upload::counted(
             opened,

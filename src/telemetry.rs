@@ -14,8 +14,18 @@ pub(crate) async fn phase<T>(
     component: &'static str,
     work: impl Future<Output = crate::error::Result<T>>,
 ) -> crate::error::Result<T> {
-    let mut report = Phase { component, started: Instant::now(), outcome: "cancelled", reason: None };
-    tracing::info!(stage = "transfer_phase", component, outcome = "started", "Media component");
+    let mut report = Phase {
+        component,
+        started: Instant::now(),
+        outcome: "cancelled",
+        reason: None,
+    };
+    tracing::info!(
+        stage = "transfer_phase",
+        component,
+        outcome = "started",
+        "Media component"
+    );
     let result = work.await;
     report.outcome = if result.is_ok() { "ok" } else { "failed" };
     report.reason = result.as_ref().err().map(reason);
@@ -31,9 +41,14 @@ struct Phase {
 
 impl Drop for Phase {
     fn drop(&mut self) {
-        tracing::info!(stage = "transfer_phase", component = self.component,
-            outcome = self.outcome, reason = self.reason,
-            elapsed_ms = self.started.elapsed().as_secs_f64() * 1000.0, "Media component");
+        tracing::info!(
+            stage = "transfer_phase",
+            component = self.component,
+            outcome = self.outcome,
+            reason = self.reason,
+            elapsed_ms = self.started.elapsed().as_secs_f64() * 1000.0,
+            "Media component"
+        );
     }
 }
 

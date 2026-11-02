@@ -7,7 +7,11 @@ use compio::{BufResult, buf::IoBufMut, fs::File, io::AsyncRead};
 use crate::{progress::Progress, telemetry::transfer::Upload};
 
 /// The local reader preserves owned InputFile streaming on compio. @req DL-11/DL-8
-pub(crate) fn counted(file: File, progress: Progress, diagnostics: Upload) -> impl AsyncRead + 'static {
+pub(crate) fn counted(
+    file: File,
+    progress: Progress,
+    diagnostics: Upload,
+) -> impl AsyncRead + 'static {
     Counted {
         reader: Cursor::new(file),
         progress,

@@ -43,12 +43,25 @@ struct State {
 impl Upload {
     pub(crate) fn new(expected: u64) -> Self {
         Self(Rc::new(RefCell::new(State {
-            started: Instant::now(), expected, bytes: 0, reads: 0, errors: 0, eof: 0,
-            first_read: None, reading: None, last_read: None, body_complete: None,
-            read_time: Duration::ZERO, read_max: Duration::ZERO,
-            gap_time: Duration::ZERO, gap_max: Duration::ZERO,
-            polls: 0, poll_time: Duration::ZERO, poll_max: Duration::ZERO,
-            timer_samples: 0, timer_lag_max: Duration::ZERO,
+            started: Instant::now(),
+            expected,
+            bytes: 0,
+            reads: 0,
+            errors: 0,
+            eof: 0,
+            first_read: None,
+            reading: None,
+            last_read: None,
+            body_complete: None,
+            read_time: Duration::ZERO,
+            read_max: Duration::ZERO,
+            gap_time: Duration::ZERO,
+            gap_max: Duration::ZERO,
+            polls: 0,
+            poll_time: Duration::ZERO,
+            poll_max: Duration::ZERO,
+            timer_samples: 0,
+            timer_lag_max: Duration::ZERO,
         })))
     }
 
@@ -77,7 +90,9 @@ impl Upload {
         match result {
             Ok(0) => state.eof = state.eof.saturating_add(1),
             Ok(bytes) => {
-                state.bytes = state.bytes.saturating_add(u64::try_from(*bytes).expect("supported pointer width fits u64"));
+                state.bytes = state.bytes.saturating_add(
+                    u64::try_from(*bytes).expect("supported pointer width fits u64"),
+                );
                 if state.bytes >= state.expected && state.body_complete.is_none() {
                     state.body_complete = Some(now);
                 }
@@ -96,7 +111,10 @@ impl Upload {
         work: impl Future<Output = Result<T, E>>,
         tick: Duration,
     ) -> Result<T, E> {
-        let mut report = FinalReport { upload: self, outcome: "cancelled" };
+        let mut report = FinalReport {
+            upload: self,
+            outcome: "cancelled",
+        };
         self.emit("started");
         let mut work = std::pin::pin!(work);
         let polled = poll_fn(|context| {
@@ -135,8 +153,14 @@ impl Upload {
                 if tracing::enabled!(tracing::Level::INFO) {
                     let sample = compio::runtime::spawn_blocking(rings).await;
                     match sample {
-                        Ok(Ok(sample)) if !sample.is_empty() => sample.into_iter().for_each(|ring| ring.emit()),
-                        _ => tracing::info!(stage = "ring_diagnostics", available = false, "Process ring sample"),
+                        Ok(Ok(sample)) if !sample.is_empty() => {
+                            sample.into_iter().for_each(|ring| ring.emit())
+                        }
+                        _ => tracing::info!(
+                            stage = "ring_diagnostics",
+                            available = false,
+                            "Process ring sample"
+                        ),
                     }
                 }
                 report_at = now + REPORT;
@@ -148,7 +172,8 @@ impl Upload {
         let state = self.0.borrow();
         let now = Instant::now();
         let elapsed = |then| now.saturating_duration_since(then).as_secs_f64() * 1000.0;
-        let since_start = |then: Instant| then.saturating_duration_since(state.started).as_secs_f64() * 1000.0;
+        let since_start =
+            |then: Instant| then.saturating_duration_since(state.started).as_secs_f64() * 1000.0;
         tracing::info!(stage = "upload_diagnostics", outcome,
             elapsed_ms = elapsed(state.started), expected_bytes = state.expected, body_bytes = state.bytes,
             file_reads = state.reads, file_read_errors = state.errors, file_eof = state.eof,
@@ -188,10 +213,17 @@ struct Ring {
 
 impl Ring {
     fn emit(&self) {
-        tracing::info!(stage = "ring_diagnostics", available = true,
-            scope = "process", descriptor = self.descriptor,
-            sq_head = self.sq_head, sq_tail = self.sq_tail,
-            cq_head = self.cq_head, cq_tail = self.cq_tail, "Process ring sample");
+        tracing::info!(
+            stage = "ring_diagnostics",
+            available = true,
+            scope = "process",
+            descriptor = self.descriptor,
+            sq_head = self.sq_head,
+            sq_tail = self.sq_tail,
+            cq_head = self.cq_head,
+            cq_tail = self.cq_tail,
+            "Process ring sample"
+        );
     }
 }
 
@@ -206,24 +238,39 @@ fn rings() -> io::Result<Vec<Ring>> {
         if target != Path::new("anon_inode:[io_uring]") {
             continue;
         }
-        let descriptor = match entry.file_name().to_str().and_then(|name| name.parse().ok()) {
+        let descriptor = match entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse().ok())
+        {
             Some(descriptor) => descriptor,
             None => continue,
         };
         let mut text = String::new();
         std::fs::File::open(Path::new("/proc/self/fdinfo").join(entry.file_name()))?
-            .take(64 * 1024).read_to_string(&mut text)?;
+            .take(64 * 1024)
+            .read_to_string(&mut text)?;
         found.push(parse_ring(descriptor, &text));
-        if found.len() == 4 { break; }
+        if found.len() == 4 {
+            break;
+        }
     }
     Ok(found)
 }
 
 fn parse_ring(descriptor: u32, text: &str) -> Ring {
-    let field = |name| text.lines().filter_map(|line| line.split_once(':'))
-        .find_map(|(key, value)| (key == name).then(|| value.trim().parse().ok()).flatten());
-    Ring { descriptor, sq_head: field("SqHead"), sq_tail: field("SqTail"),
-        cq_head: field("CqHead"), cq_tail: field("CqTail") }
+    let field = |name| {
+        text.lines()
+            .filter_map(|line| line.split_once(':'))
+            .find_map(|(key, value)| (key == name).then(|| value.trim().parse().ok()).flatten())
+    };
+    Ring {
+        descriptor,
+        sq_head: field("SqHead"),
+        sq_tail: field("SqTail"),
+        cq_head: field("CqHead"),
+        cq_tail: field("CqTail"),
+    }
 }
 
 #[cfg(test)]
@@ -233,21 +280,26 @@ mod tests {
     #[compio::test]
     async fn separates_read_await_body_demand_and_response_tail() {
         let upload = Upload::new(8);
-        let result: Result<(), ()> = upload.run(async {
-            upload.read_started();
-            compio::time::sleep(Duration::from_millis(12)).await;
-            upload.read_finished(&Ok(4));
-            compio::time::sleep(Duration::from_millis(18)).await;
-            upload.read_started();
-            upload.read_finished(&Ok(4));
-            upload.read_started();
-            upload.read_finished(&Ok(0));
-            compio::time::sleep(Duration::from_millis(25)).await;
-            Ok(())
-        }).await;
+        let result: Result<(), ()> = upload
+            .run(async {
+                upload.read_started();
+                compio::time::sleep(Duration::from_millis(12)).await;
+                upload.read_finished(&Ok(4));
+                compio::time::sleep(Duration::from_millis(18)).await;
+                upload.read_started();
+                upload.read_finished(&Ok(4));
+                upload.read_started();
+                upload.read_finished(&Ok(0));
+                compio::time::sleep(Duration::from_millis(25)).await;
+                Ok(())
+            })
+            .await;
         assert_eq!(result, Ok(()));
         let state = upload.0.borrow();
-        assert_eq!((state.bytes, state.reads, state.eof, state.errors), (8, 3, 1, 0));
+        assert_eq!(
+            (state.bytes, state.reads, state.eof, state.errors),
+            (8, 3, 1, 0)
+        );
         assert!(state.read_time >= Duration::from_millis(10));
         assert!(state.gap_time >= Duration::from_millis(15));
         assert!(state.body_complete.expect("body complete").elapsed() >= Duration::from_millis(20));
@@ -257,13 +309,18 @@ mod tests {
     #[compio::test]
     async fn records_slow_poll_timer_delay_and_preserves_failure() {
         let upload = Upload::new(5);
-        let result = upload.run_with_tick(async {
-            std::thread::sleep(Duration::from_millis(20));
-            compio::time::sleep(Duration::from_millis(20)).await;
-            upload.read_started();
-            upload.read_finished(&Err(io::Error::other("PRIVATE")));
-            Err::<(), _>(17)
-        }, Duration::from_millis(2)).await;
+        let result = upload
+            .run_with_tick(
+                async {
+                    std::thread::sleep(Duration::from_millis(20));
+                    compio::time::sleep(Duration::from_millis(20)).await;
+                    upload.read_started();
+                    upload.read_finished(&Err(io::Error::other("PRIVATE")));
+                    Err::<(), _>(17)
+                },
+                Duration::from_millis(2),
+            )
+            .await;
         assert_eq!(result, Err(17));
         let state = upload.0.borrow();
         assert_eq!((state.bytes, state.errors), (0, 1));
@@ -276,10 +333,14 @@ mod tests {
     #[compio::test]
     async fn cancellation_drops_work_without_a_detached_monitor() {
         let upload = Upload::new(5);
-        let result = compio::time::timeout(Duration::from_millis(5), upload.run(async {
-            upload.read_started();
-            std::future::pending::<Result<(), ()>>().await
-        })).await;
+        let result = compio::time::timeout(
+            Duration::from_millis(5),
+            upload.run(async {
+                upload.read_started();
+                std::future::pending::<Result<(), ()>>().await
+            }),
+        )
+        .await;
         assert!(result.is_err());
         assert!(upload.0.borrow().reading.is_some());
         assert_eq!(Rc::strong_count(&upload.0), 1);
@@ -287,7 +348,13 @@ mod tests {
 
     #[test]
     fn ring_parser_whitelists_numeric_fields_and_leaves_missing_unknown() {
-        let ring = parse_ring(12, "SqHead:\t23\nSqTail:\t24\nCqHead:\t45\nCqTail:\tPRIVATE\nSQEs:\tPRIVATE\n");
-        assert_eq!((ring.sq_head, ring.sq_tail, ring.cq_head, ring.cq_tail), (Some(23), Some(24), Some(45), None));
+        let ring = parse_ring(
+            12,
+            "SqHead:\t23\nSqTail:\t24\nCqHead:\t45\nCqTail:\tPRIVATE\nSQEs:\tPRIVATE\n",
+        );
+        assert_eq!(
+            (ring.sq_head, ring.sq_tail, ring.cq_head, ring.cq_tail),
+            (Some(23), Some(24), Some(45), None)
+        );
     }
 }

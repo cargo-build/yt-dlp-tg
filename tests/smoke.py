@@ -572,6 +572,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                         assert f'component="{component}"' in logged and 'stage="transfer_phase"' in logged
                     assert 'stage="ring_diagnostics"' in logged
                     assert '1000:fixture' not in logged and str(root) not in logged
+                    print(f'{mode}: transfer boundaries body_bytes=8388608 body_gap_max_ms={gap:.3f} after_body_ms={tail:.3f}; cached reuse performed no upload')
                     for url in ('opus-only','aac-mismatch'):
                         choose('https://media.invalid/'+url,'m')
                         alternative=menu()
