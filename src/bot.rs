@@ -855,7 +855,7 @@ async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
         let bot_id = app.current_bot_id(bot).await?;
         if request.bot_id != bot_id
             || !authorized(&app.config, UserId(request.user_id))
-            || request.policy != delivery::variant(&request.format)
+            || !delivery::accepts_policy(&request.policy, &request.format)
         {
             return Err(Error::Queue("stored request is no longer authorized"));
         }

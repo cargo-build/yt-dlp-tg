@@ -12,7 +12,7 @@ use teloxide::{
     Bot, RequestError,
     errors::ApiError,
     payloads::{
-        EditMessageTextSetters, SendAudioSetters, SendDocumentSetters, SendVideoSetters,
+        EditMessageTextSetters, SendAudioSetters, SendVideoSetters,
         SendVoiceSetters,
     },
     requests::Requester,
@@ -65,7 +65,7 @@ pub async fn deliver(
             send_typed(
                 bot,
                 request.chat,
-                &cached.kind,
+                &request.format,
                 InputFile::file_id(FileId(cached.file_id)),
                 &request.media.title,
             ),
@@ -94,14 +94,13 @@ pub async fn deliver(
     let result = async {
         compio::fs::create_dir_all(&config.download_dir).await?;
         compio::fs::create_dir(&directory).await?;
-        let observe = |line: &[u8]| feedback.observe(line);
         let path = tracked(
             bot,
             request.chat,
             request.status,
             request.language,
             &feedback,
-            media::download(config, request.media, &request.format, &directory, &observe),
+            media::download(config, request.media, &request.format, &directory, &feedback),
         )
         .await?;
         feedback.download_finished();
@@ -122,7 +121,7 @@ pub async fn deliver(
             request.status,
             request.language,
             &feedback,
-            send_typed(bot, request.chat, &kind, file, &request.media.title),
+            send_typed(bot, request.chat, &request.format, file, &request.media.title),
         )
         .await
         .map_err(|_| Error::Telegram("media upload failed".into()))?;
@@ -212,8 +211,14 @@ pub(crate) fn variant(format: &Format) -> String {
     match format {
         Format::Opus => "voice-opus-cover-v2".into(),
         Format::M4a => "music-native-aac-v2".into(),
-        Format::Video { height, .. } => format!("video-{height}p-v2"),
+        Format::Video { height, .. } => format!("video-{height}p-mp4-v3"),
     }
+}
+
+/// Accepted pre-upgrade video jobs retain their recipient and selection. @req DL-9 DL-14
+pub(crate) fn accepts_policy(policy: &str, format: &Format) -> bool {
+    policy == variant(format)
+        || matches!(format, Format::Video { height, .. } if policy == format!("video-{height}p-v2"))
 }
 
 fn matches_format(format: &Format, kind: &FileKind) -> bool {
@@ -221,7 +226,7 @@ fn matches_format(format: &Format, kind: &FileKind) -> bool {
         (format, kind),
         (Format::Opus, FileKind::Voice)
             | (Format::M4a, FileKind::Audio)
-            | (Format::Video { .. }, FileKind::Video | FileKind::Document)
+            | (Format::Video { .. }, FileKind::Video)
     )
 }
 
@@ -230,7 +235,6 @@ fn upload_kind(format: &Format, path: &Path) -> Result<(FileKind, &'static str)>
         (Format::Opus, Some("opus")) => Ok((FileKind::Voice, "ogg")),
         (Format::M4a, Some("m4a")) => Ok((FileKind::Audio, "m4a")),
         (Format::Video { .. }, Some("mp4")) => Ok((FileKind::Video, "mp4")),
-        (Format::Video { .. }, Some("mkv")) => Ok((FileKind::Document, "mkv")),
         _ => Err(Error::YtDlp(
             "download format does not match its requested delivery".into(),
         )),
@@ -252,26 +256,25 @@ fn upload_name(title: &str, extension: &str) -> String {
 async fn send_typed(
     bot: &Bot,
     chat: ChatId,
-    kind: &FileKind,
+    format: &Format,
     file: InputFile,
     title: &str,
 ) -> std::result::Result<Message, RequestError> {
     let title: String = title.chars().take(200).collect();
-    match kind {
-        FileKind::Voice => bot.send_voice(chat, file).caption(title).await,
-        FileKind::Audio => {
+    match format {
+        Format::Opus => bot.send_voice(chat, file).caption(title).await,
+        Format::M4a => {
             bot.send_audio(chat, file)
                 .title(title.clone())
                 .caption(title)
                 .await
         }
-        FileKind::Video => {
+        Format::Video { .. } => {
             bot.send_video(chat, file)
                 .supports_streaming(true)
                 .caption(title)
                 .await
         }
-        FileKind::Document => bot.send_document(chat, file).caption(title).await,
     }
 }
 
@@ -280,7 +283,7 @@ fn response_file(message: &Message, kind: FileKind) -> Result<CachedFile> {
         FileKind::Voice => message.voice().map(|voice| &voice.file.id),
         FileKind::Audio => message.audio().map(|audio| &audio.file.id),
         FileKind::Video => message.video().map(|video| &video.file.id),
-        FileKind::Document => message.document().map(|document| &document.file.id),
+        FileKind::Document => None,
     }
     .ok_or_else(|| Error::Telegram("upload response lacks the requested media type".into()))?;
     if file.0.trim().is_empty() {
@@ -305,7 +308,7 @@ fn invalid_file_id(error: &RequestError) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{invalid_file_id, upload_kind, upload_name, variant};
+    use super::{accepts_policy, invalid_file_id, matches_format, upload_kind, upload_name, variant};
     use crate::{cache::FileKind, media::Format};
     use std::path::Path;
     use teloxide::{RequestError, errors::ApiError};
@@ -352,8 +355,27 @@ mod tests {
         };
         assert_ne!(variant(&video(720)), variant(&video(1080)));
         assert_ne!(variant(&video(1080)), "video-1080-v1");
+        assert_eq!(variant(&video(720)), "video-720p-mp4-v3");
+        assert!(upload_kind(&video(720), Path::new("media.mkv")).is_err());
+        assert!(!matches_format(&video(720), &FileKind::Document));
         assert_ne!(variant(&Format::Opus), "voice-opus-v1");
         assert_eq!(variant(&Format::M4a), "music-native-aac-v2");
+    }
+
+    #[test]
+    fn persisted_video_jobs_upgrade_without_reusing_document_policy() {
+        let request: crate::jobs::Request = serde_json::from_value(serde_json::json!({
+            "bot_id":1000,"user_id":42,"chat_id":42,"status_message":10,"language":"en",
+            "media":{"title":"Fixture","url":"https://media.invalid/video"},
+            "format":{"Video":{"height":720,"selection":{"selector":"all[format_id=v][height=720]","size":{"Exact":1024}}}},
+            "policy":"video-720p-v2"
+        })).expect("deployed video request remains decodable");
+        assert!(accepts_policy(&request.policy, &request.format));
+        assert!(accepts_policy(&variant(&request.format), &request.format));
+        assert!(!accepts_policy("video-480p-v2", &request.format));
+        assert!(!accepts_policy("video-720p-v1", &request.format));
+        assert!(!accepts_policy("video-720p-v2", &Format::M4a));
+        assert_ne!(request.policy, variant(&request.format));
     }
 
     #[test]

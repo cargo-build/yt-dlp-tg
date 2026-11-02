@@ -132,7 +132,7 @@ enum AudioCodec {
 enum Tier {
     /// H.264 video with AAC audio, or H.264 alone when the source is silent.
     Preferred,
-    /// Any other classifiable combination, remuxable to MKV without re-encoding.
+    /// Other codecs require conversion before playable MP4 delivery.
     Alternative,
 }
 

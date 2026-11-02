@@ -17,7 +17,11 @@ Iggy queue. See [SPEC.md](SPEC.md) for the behavior contract.
   native Opus or converts other codecs at high quality. Opus is lossy and uses
   Telegram's voice player. Its selected-video thumbnail is embedded in the file
   when available; Telegram may still show a waveform.
-- Video is limited to1080p. Resolution buttons include audio-inclusive sizes;
+- Video is delivered as streamable MP4 with H.264/yuv420p and AAC where present.
+  Compatible streams are copied; incompatible SDR streams are converted on CPU
+  under the existing download timeout and scratch limits. Conversion can increase
+  file size; the final upload cap is always enforced without truncation.
+  Video is limited to1080p. Resolution buttons show audio-inclusive source estimates;
   oversized, unknown-size and unsupported choices are unavailable. Cloud Bot API
   uploads default to50MiB. A user's Premium subscription does not raise that cap.
 - Successful uploads are cached as typed Telegram file IDs in redb. YouTube URL
@@ -28,6 +32,7 @@ Iggy queue. See [SPEC.md](SPEC.md) for the behavior contract.
   updates, measured bytes or honest indeterminate bars, and explicit cache reuse.
   Upload counters measure bytes handed to the request body; completion still
   waits for Telegram's response. Cosmetic edit failures do not cancel media work.
+  Preparing MP4 is shown during normalization without an invented encoder percentage.
 - Optional image recognition keeps artist/title separate, searches for a matching
   video and offers download/correction controls. The selected MCP model, prompt,
   schema and messages live in [configuration](config/track-vision/README.md).

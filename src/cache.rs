@@ -25,7 +25,7 @@ pub enum FileKind {
     Audio,
     /// Playable video message within the resolution cap.
     Video,
-    /// Non-playable file, such as MKV.
+    /// Legacy document IDs remain readable during an output-policy upgrade.
     Document,
 }
 

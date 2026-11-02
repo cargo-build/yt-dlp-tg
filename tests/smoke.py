@@ -21,7 +21,7 @@ import urllib.error
 
 
 FAKE_YTDLP = r'''#!/usr/bin/env python3
-import json, os, pathlib, sys, time, urllib.parse
+import json, os, pathlib, re, shutil, sys, time, urllib.parse
 a = sys.argv[1:]
 with open(os.environ['FAKE_CALLS'], 'a') as calls:
     calls.write(json.dumps(a) + '\n')
@@ -52,6 +52,13 @@ elif '--dump-single-json' in a:
             entries[1]['title'] = 'Unfound & Forhill - Atlas'
         print(json.dumps({'_type':'playlist','entries':entries}))
     else:
+        if os.environ.get('FAKE_REAL_VIDEO_DIR'):
+            directory=pathlib.Path(os.environ['FAKE_REAL_VIDEO_DIR'])
+            key=urllib.parse.urlparse(operand).path.rsplit('/',1)[-1]
+            record=json.loads((directory/'manifest.json').read_text())[key]
+            fmt={'format_id':'fixture','height':record['height'],'vcodec':record['video'],'acodec':record['audio'],
+                 'filesize':(directory/record['file']).stat().st_size}
+            print(json.dumps({'title':'Real media fixture','webpage_url':operand,'duration':1,'formats':[fmt]}));sys.exit(0)
         formats = [
             {'format_id':'a','vcodec':'none','acodec':'mp4a.40.2','filesize':1000000},
             {'format_id':'v1080','height':1080,'vcodec':'avc1','acodec':'none','filesize':80000000},
@@ -78,6 +85,12 @@ else:
     ext = a[a.index('--audio-format')+1] if '--extract-audio' in a else ('mkv' if 'mkv' in a[-1] else 'mp4')
     if ext == 'best': ext = 'm4a'
     path = directory / ('media.'+ext)
+    if os.environ.get('FAKE_REAL_VIDEO_DIR'):
+        fixtures=pathlib.Path(os.environ['FAKE_REAL_VIDEO_DIR'])
+        key=urllib.parse.urlparse(a[-1]).path.rsplit('/',1)[-1]
+        record=json.loads((fixtures/'manifest.json').read_text())[key]
+        shutil.copyfile(fixtures/record['file'],path)
+        print(json.dumps(str(path)));sys.exit(0)
     if a[-1].endswith('/slow-progress'):
         total = 8*1024*1024
         with path.open('wb') as file:
@@ -100,9 +113,40 @@ else:
                 file.write(b'x'*1024*1024); file.flush(); time.sleep(.01)
         print(json.dumps(str(path))); sys.exit(0)
     path.write_bytes(b'not-aac' if a[-1].endswith('/aac-mismatch') else b'fixture media content')
+    if '--extract-audio' not in a:
+        selector = a[a.index('--format')+1]
+        height = int(re.search(r'\[height=(\d+)\]',selector)[1])
+        path.write_text(json.dumps({'height':height,'video':'vp9' if path.suffix=='.mkv' else 'h264','audio':'aac'}))
     if '--progress' in a:
         print(f'yt-dlp-tg-progress1|audio|finished|NA|{path.stat().st_size}|NA')
     print(json.dumps(str(path)))
+'''
+
+
+FAKE_FFPROBE = r'''#!/usr/bin/env python3
+import json,pathlib,sys
+path=pathlib.Path(sys.argv[-1].removeprefix('file:'))
+content=path.read_bytes()
+if path.suffix in ('.mp4','.mkv'):
+    payload=content[content.index(b'mdat')+4:] if content[4:8]==b'ftyp' else content
+    data=json.loads(payload)
+    streams=[{'index':0,'codec_type':'video','codec_name':data['video'],'pix_fmt':'yuv420p','width':1280,'height':data['height'],'disposition':{'attached_pic':0},'side_data_list':[]}]
+    if data.get('audio'): streams.append({'index':1,'codec_type':'audio','codec_name':data['audio'],'channels':2,'disposition':{'attached_pic':0}})
+    print(json.dumps({'streams':streams,'format':{'format_name':'matroska,webm' if path.suffix=='.mkv' else 'mov,mp4,m4a,3gp,3g2,mj2','duration':'3.0'}}))
+else:
+    print(json.dumps({'streams':[{'codec_type':'audio','codec_name':'mp3' if content==b'not-aac' else 'aac'}]}))
+'''
+
+FAKE_FFMPEG = r'''#!/usr/bin/env python3
+import json,pathlib,struct,sys
+a=sys.argv[1:]
+source=pathlib.Path(a[a.index('-i')+1].removeprefix('file:'))
+content=source.read_bytes()
+data=json.loads(content[content.index(b'mdat')+4:] if content[4:8]==b'ftyp' else content)
+data['video']='h264'
+if data.get('audio'): data['audio']='aac'
+def box(kind,payload=b''): return struct.pack('>I4s',len(payload)+8,kind)+payload
+pathlib.Path(a[-1].removeprefix('file:')).write_bytes(box(b'ftyp',b'isom\0\0\0\0isom')+box(b'moov')+box(b'mdat',json.dumps(data).encode()))
 '''
 
 
@@ -291,7 +335,7 @@ class Telegram(http.server.BaseHTTPRequestHandler):
             pass
 
 
-def smoke(binary, mode, startup_stop=False, images=False, vision=False, queue_env=None, broker_control=None, status_only=False, public_access=False, progress_only=False):
+def smoke(binary, mode, startup_stop=False, images=False, vision=False, queue_env=None, broker_control=None, status_only=False, public_access=False, progress_only=False, real_video_root=None):
     state = {'condition': threading.Condition(), 'updates': [], 'events': [], 'sequence': 100, 'webhook': None, 'delay_setup': startup_stop, 'setup_started': threading.Event(), 'release_setup': threading.Event(), 'files': {}, 'uploads': 0, 'reject': {}, 'rejections': 0}
     state['reject_duplicate_edits'] = vision
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Telegram)
@@ -306,8 +350,13 @@ def smoke(binary, mode, startup_stop=False, images=False, vision=False, queue_en
         fixture.write_text(FAKE_YTDLP)
         fixture.chmod(0o700)
         ffprobe = root / 'ffprobe'
-        ffprobe.write_text("#!/usr/bin/env python3\nimport json,pathlib,sys\ncodec='mp3' if pathlib.Path(sys.argv[-1]).read_bytes()==b'not-aac' else 'aac'\nprint(json.dumps({'streams':[{'codec_type':'audio','codec_name':codec}]}))\n")
-        ffprobe.chmod(0o700)
+        if real_video_root is None:
+            ffprobe.write_text(FAKE_FFPROBE)
+            ffprobe.chmod(0o700)
+        ffmpeg = root / 'ffmpeg'
+        if real_video_root is None:
+            ffmpeg.write_text(FAKE_FFMPEG)
+            ffmpeg.chmod(0o700)
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             webhook_port = sock.getsockname()[1]
@@ -316,6 +365,8 @@ def smoke(binary, mode, startup_stop=False, images=False, vision=False, queue_en
         if public_access:
             env['ALLOWED_USER_IDS'] = 'all'
         env['FAKE_HEADER_ORIGIN'] = f'http://127.0.0.1:{server.server_port}'
+        if real_video_root is not None:
+            env['FAKE_REAL_VIDEO_DIR'] = str(real_video_root)
         env.pop('TG_PROXY', None)
         env.pop('YTDLP_PROXY', None)
         for key in tuple(env):
@@ -442,16 +493,40 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
             def active(payload, phase):
                 return '▶ '+phase in payload.get('text','').splitlines()
 
-            def choose(url, action):
+            def choose(url, action, height=720):
                 message(url)
                 chosen = menu()
                 press(chosen, action)
                 if action == 'v':
                     qualities = menu()
-                    pick_video(qualities)
+                    pick_video(qualities,height)
                 return chosen
 
             try:
+                if real_video_root is not None:
+                    from video_smoke import verify_upload
+                    manifest=json.loads((real_video_root/'manifest.json').read_text())
+                    for key,record in manifest.items():
+                        before_uploads=state['uploads']
+                        choose('https://media.invalid/'+key,'v',record['height'])
+                        if record.get('rejected'):
+                            wait('editmessagetext',lambda p:p.get('text')=='Request failed. Try another link or query.')
+                            assert state['uploads']==before_uploads, 'unsupported video reached Telegram'
+                            continue
+                        delivered=wait('sendvideo')
+                        verify_upload(real_video_root/record['file'],delivered,record,root)
+                        wait('editmessagetext',lambda p:p.get('text')=='Sent.')
+                        before_downloads=downloads()
+                        choose('https://media.invalid/'+key,'v',record['height'])
+                        reused=wait('sendvideo')
+                        assert reused[1]['video']==delivered[2]['video']['file_id']
+                        wait('editmessagetext',lambda p:p.get('text')=='Sent.')
+                        assert downloads()==before_downloads, 'MP4 cache hit downloaded again'
+                    assert not any(event[0]=='senddocument' for event in state['events'])
+                    assert not list((root/'jobs').iterdir()), 'MP4 job scratch leaked'
+                    process.send_signal(signal.SIGTERM);assert process.wait(timeout=10)==0
+                    print(f'{mode}: real FFmpeg MP4 codecs, copy/conversion, faststart, limits and typed cache passed')
+                    return
                 if progress_only:
                     state['slow_upload'] = True
                     choose('https://media.invalid/slow-progress','m')
@@ -884,7 +959,8 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                 wait('editmessagetext', lambda p: p.get('text') == 'Sent.')
                 choose('https://media.invalid/movie.mkv', 'v')
                 wait('editmessagetext', lambda p: active(p, 'Downloading…'))
-                assert b'.mkv"' in wait('senddocument')[3]
+                assert b'.mp4"' in wait('sendvideo')[3]
+                assert not any(event[0]=='senddocument' for event in state['events'])
 
                 before = downloads()
                 uploads = state['uploads']

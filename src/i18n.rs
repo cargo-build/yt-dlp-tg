@@ -89,6 +89,7 @@ pub enum Text {
     ProgressPending,
     ProgressCached,
     NativeAacUnavailable,
+    PreparingVideo,
 }
 
 impl Language {
@@ -114,7 +115,7 @@ impl Language {
     }
 }
 
-const COPY: [[&str; 63]; 8] = [
+const COPY: [[&str; 64]; 8] = [
     [
         "Send a video link or search text. YouTube is the default; use Sources to change it. Choose a result, then native AAC music, Opus voice or video up to 1080p. /search <text> also works.",
         "This bot is private. Your account is not allowed.",
@@ -168,7 +169,7 @@ const COPY: [[&str; 63]; 8] = [
         "Other formats",
         "Other results",
         "Limits: media sent by this bot must fit {limit} MB; video is capped at 1080p. Download/conversion timeout: {download}s; sending timeout: {send}s. Choose a lower resolution or audio if video is unavailable. Telegram Premium does not raise this bot's limit.",
-        "Choose video resolution (up to 1080p, {limit} MB per file). Sizes include audio when present; ~ marks estimates. Unavailable options will not be downloaded.",
+        "Choose MP4 resolution (up to 1080p, {limit} MB per file). Sizes estimate the source including audio. Conversion may increase size; the final file must fit the limit. Unavailable options will not be downloaded.",
         "unavailable",
         "size unknown",
         "This bot cannot send that resolution from this source.",
@@ -179,6 +180,7 @@ const COPY: [[&str; 63]; 8] = [
         "Waiting",
         "Stored in Telegram",
         "Native AAC is unavailable for this source. Choose Opus.",
+        "Preparing MP4…",
     ],
     [
         "发送视频链接或搜索文字。默认搜索 YouTube，可通过“来源”更改。选择结果后，可播放 Opus 语音、AAC (M4A) 音乐或最高 1080p 视频。也可使用 /search <文字>。",
@@ -233,7 +235,7 @@ const COPY: [[&str; 63]; 8] = [
         "其他格式",
         "其他结果",
         "限制：本机器人发送的文件不得超过 {limit} MB，视频最高为 1080p。下载或转换时限：{download} 秒；发送时限：{send} 秒。视频不可用时，请选择更低分辨率或音频。Telegram Premium 不会提高本机器人的限制。",
-        "选择视频分辨率（最高 1080p，每个文件不超过 {limit} MB）。大小包含音频（如有），~ 表示估算。不可用的选项不会下载。",
+        "选择 MP4 分辨率（最高 1080p，每个文件不超过 {limit} MB）。大小为包含音频的源文件估计值。转换后可能增大，最终文件必须符合限制。不可用的选项不会下载。",
         "不可用",
         "大小未知",
         "本机器人无法从该来源发送此分辨率。",
@@ -244,6 +246,7 @@ const COPY: [[&str; 63]; 8] = [
         "等待",
         "已存储在 Telegram",
         "此来源没有可用的原始 AAC。请选择 Opus。",
+        "正在生成 MP4…",
     ],
     [
         "वीडियो लिंक या खोज शब्द भेजें। डिफ़ॉल्ट स्रोत YouTube है; स्रोत बटन से बदलें। परिणाम चुनकर Opus वॉइस, AAC (M4A) संगीत या अधिकतम 1080p वीडियो लें। /search <शब्द> भी उपयोग कर सकते हैं।",
@@ -298,7 +301,7 @@ const COPY: [[&str; 63]; 8] = [
         "अन्य फ़ॉर्मैट",
         "अन्य नतीजे",
         "सीमाएँ: बॉट से भेजी जाने वाली फ़ाइल अधिकतम {limit} MB और वीडियो अधिकतम 1080p हो सकता है। डाउनलोड/परिवर्तन की समय सीमा: {download}s; भेजने की: {send}s। वीडियो उपलब्ध न हो तो कम रेज़ोल्यूशन या ऑडियो चुनें। Telegram Premium बॉट की सीमा नहीं बढ़ाता।",
-        "वीडियो रेज़ोल्यूशन चुनें (अधिकतम 1080p, प्रति फ़ाइल {limit} MB)। उपलब्ध होने पर ऑडियो का आकार शामिल है; ~ अनुमान है। अनुपलब्ध विकल्प डाउनलोड नहीं होंगे।",
+        "MP4 रिज़ॉल्यूशन चुनें (अधिकतम 1080p, प्रति फ़ाइल {limit} MB)। आकार में स्रोत का ऑडियो शामिल है। रूपांतरण से आकार बढ़ सकता है; अंतिम फ़ाइल सीमा में होनी चाहिए। अनुपलब्ध विकल्प डाउनलोड नहीं होंगे।",
         "अनुपलब्ध",
         "आकार अज्ञात",
         "बॉट इस स्रोत से इस रेज़ोल्यूशन में वीडियो नहीं भेज सकता।",
@@ -309,6 +312,7 @@ const COPY: [[&str; 63]; 8] = [
         "प्रतीक्षा",
         "Telegram में संग्रहीत",
         "इस स्रोत में मूल AAC उपलब्ध नहीं है। Opus चुनें।",
+        "MP4 तैयार हो रहा है…",
     ],
     [
         "Envía un enlace de vídeo o una búsqueda. YouTube es la fuente predeterminada; cámbiala en Fuentes. Elige un resultado y después voz Opus, música AAC (M4A) o vídeo de hasta 1080p. También puedes usar /search <texto>.",
@@ -363,7 +367,7 @@ const COPY: [[&str; 63]; 8] = [
         "Otros formatos",
         "Otros resultados",
         "Límites: los archivos enviados por este bot deben caber en {limit} MB; vídeo hasta 1080p. Tiempo máximo de descarga/conversión: {download}s; envío: {send}s. Si el vídeo no está disponible, elige menor resolución o audio. Telegram Premium no aumenta este límite.",
-        "Elige resolución (hasta 1080p, {limit} MB por archivo). El tamaño incluye audio cuando existe; ~ indica una estimación. Las opciones no disponibles no se descargarán.",
+        "Elige la resolución MP4 (hasta 1080p y {limit} MB por archivo). Los tamaños estiman el origen con audio. La conversión puede aumentarlos; el archivo final debe respetar el límite. No se descargarán opciones no disponibles.",
         "no disponible",
         "tamaño desconocido",
         "Este bot no puede enviar esa resolución desde esta fuente.",
@@ -374,6 +378,7 @@ const COPY: [[&str; 63]; 8] = [
         "En espera",
         "Guardado en Telegram",
         "Esta fuente no tiene AAC original disponible. Elige Opus.",
+        "Preparando MP4…",
     ],
     [
         "أرسل رابط فيديو أو كلمات بحث. المصدر الافتراضي هو YouTube، ويمكن تغييره من المصادر. اختر نتيجة ثم صوت Opus أو موسيقى AAC (M4A) أو فيديو بدقة حتى 1080p. يمكنك أيضًا استخدام /search <نص>.",
@@ -428,7 +433,7 @@ const COPY: [[&str; 63]; 8] = [
         "صيغ أخرى",
         "نتائج أخرى",
         "الحدود: الملفات التي يرسلها البوت لا تتجاوز {limit} MB، والفيديو حتى 1080p. مهلة التنزيل/التحويل: {download}s؛ الإرسال: {send}s. اختر دقة أقل أو الصوت إذا لم يتوفر الفيديو. Telegram Premium لا يزيد حد البوت.",
-        "اختر دقة الفيديو (حتى 1080p، وبحد {limit} MB للملف). الحجم يشمل الصوت عند وجوده؛ ~ يعني تقديرًا. لن تُنزّل الخيارات غير المتاحة.",
+        "اختر دقة MP4 (حتى 1080p و{limit} MB لكل ملف). الأحجام تقديرية للمصدر مع الصوت. قد يزيد التحويل الحجم؛ يجب أن يلتزم الملف النهائي بالحد. لن تُنزّل الخيارات غير المتاحة.",
         "غير متاح",
         "الحجم غير معروف",
         "لا يستطيع البوت إرسال هذه الدقة من هذا المصدر.",
@@ -439,6 +444,7 @@ const COPY: [[&str; 63]; 8] = [
         "بانتظار البدء",
         "محفوظ في Telegram",
         "لا يتوفر AAC أصلي لهذا المصدر. اختر Opus.",
+        "جارٍ تجهيز MP4…",
     ],
     [
         "Envoyez un lien vidéo ou une recherche. YouTube est la source par défaut ; changez-la via Sources. Choisissez un résultat, puis un message vocal Opus, de la musique AAC (M4A) ou une vidéo jusqu’à 1080p. /search <texte> fonctionne aussi.",
@@ -493,7 +499,7 @@ const COPY: [[&str; 63]; 8] = [
         "Autres formats",
         "Autres résultats",
         "Limites : les fichiers envoyés par ce bot doivent tenir dans {limit} MB ; vidéo jusqu’à 1080p. Délai de téléchargement/conversion : {download}s ; envoi : {send}s. Choisissez une résolution inférieure ou l’audio si la vidéo est indisponible. Telegram Premium n’augmente pas cette limite.",
-        "Choisissez la résolution (jusqu’à 1080p, {limit} MB par fichier). La taille inclut l’audio si présent ; ~ indique une estimation. Les options indisponibles ne seront pas téléchargées.",
+        "Choisissez la résolution MP4 (1080p maximum, {limit} Mo par fichier). Les tailles estiment la source avec le son. La conversion peut les augmenter ; le fichier final doit respecter la limite. Les options indisponibles ne seront pas téléchargées.",
         "indisponible",
         "taille inconnue",
         "Ce bot ne peut pas envoyer cette résolution depuis cette source.",
@@ -504,6 +510,7 @@ const COPY: [[&str; 63]; 8] = [
         "En attente",
         "Stocké dans Telegram",
         "AAC natif indisponible pour cette source. Choisissez Opus.",
+        "Préparation du MP4…",
     ],
     [
         "Envie um link de vídeo ou uma pesquisa. A fonte padrão é o YouTube; altere em Fontes. Escolha um resultado e depois voz Opus, música AAC (M4A) ou vídeo de até 1080p. /search <texto> também funciona.",
@@ -558,7 +565,7 @@ const COPY: [[&str; 63]; 8] = [
         "Outros formatos",
         "Outros resultados",
         "Limites: arquivos enviados por este bot devem caber em {limit} MB; vídeo até 1080p. Tempo máximo de download/conversão: {download}s; envio: {send}s. Escolha resolução menor ou áudio se o vídeo estiver indisponível. Telegram Premium não aumenta esse limite.",
-        "Escolha a resolução (até 1080p, {limit} MB por arquivo). O tamanho inclui áudio quando presente; ~ indica estimativa. Opções indisponíveis não serão baixadas.",
+        "Escolha a resolução MP4 (até 1080p, {limit} MB por arquivo). Os tamanhos estimam a origem com áudio. A conversão pode aumentá-los; o arquivo final deve respeitar o limite. Opções indisponíveis não serão baixadas.",
         "indisponível",
         "tamanho desconhecido",
         "Este bot não pode enviar essa resolução desta fonte.",
@@ -569,6 +576,7 @@ const COPY: [[&str; 63]; 8] = [
         "Aguardando",
         "Armazenado no Telegram",
         "AAC original indisponível nesta fonte. Escolha Opus.",
+        "Preparando MP4…",
     ],
     [
         "Отправьте ссылку на видео или поисковый запрос. По умолчанию поиск идёт в YouTube; источник можно изменить кнопкой «Источники». Выберите результат, затем голосовое Opus, музыку AAC (M4A) или видео до 1080p. Также работает /search <текст>.",
@@ -623,7 +631,7 @@ const COPY: [[&str; 63]; 8] = [
         "Другие форматы",
         "Другие результаты",
         "Ограничения: отправляемый ботом файл должен укладываться в {limit} MB, видео — до 1080p. Лимит времени загрузки/конвертации: {download}с; отправки: {send}с. Если видео недоступно, выберите меньшее разрешение или аудио. Telegram Premium не увеличивает лимит бота.",
-        "Выберите разрешение видео (до 1080p, не больше {limit} MB на файл). Размер включает звук при его наличии; ~ означает оценку. Недоступные варианты не загружаются.",
+        "Выберите разрешение MP4 (до 1080p, не более {limit} МБ на файл). Размеры оценивают исходник со звуком. Конвертация может увеличить размер; итоговый файл должен уложиться в лимит. Недоступные варианты не загружаются.",
         "недоступно",
         "размер неизвестен",
         "Бот не может отправить это разрешение из данного источника.",
@@ -634,6 +642,7 @@ const COPY: [[&str; 63]; 8] = [
         "Ожидание",
         "Хранится в Telegram",
         "В этом источнике нет доступного оригинального AAC. Выберите Opus.",
+        "Подготовка MP4…",
     ],
 ];
 

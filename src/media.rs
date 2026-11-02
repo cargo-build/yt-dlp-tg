@@ -1,12 +1,13 @@
 //! Bounded yt-dlp processes and validated media metadata. @req DL-2 DL-4 DL-5 DL-8
 
 mod size;
+mod playable;
 
 use std::{
     collections::HashSet,
     io,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use compio::process::Command;
@@ -336,12 +337,12 @@ fn parse_search(output: &[u8]) -> Result<Vec<Media>> {
 }
 
 /// Download into an empty caller-owned job directory and validate the final file. @req DL-4 DL-5 DL-8
-pub async fn download(
+pub(crate) async fn download(
     config: &Config,
     media: &Media,
     format: &Format,
     directory: &Path,
-    observer: &dyn Fn(&[u8]),
+    feedback: &progress::Progress,
 ) -> Result<PathBuf> {
     if let Format::Video { height, selection } = format {
         if !(1..=1080).contains(height) {
@@ -373,6 +374,8 @@ pub async fn download(
         Format::Opus | Format::M4a => total_bytes,
         Format::Video { .. } => config.max_upload_bytes,
     };
+    let deadline = Instant::now() + Duration::from_secs(config.download_timeout_secs);
+    let observe = |line: &[u8]| feedback.observe(line);
     let output = process::run_guarded(
         &mut command,
         Duration::from_secs(config.download_timeout_secs),
@@ -382,7 +385,7 @@ pub async fn download(
             file_bytes,
             total_bytes,
         },
-        Some(observer),
+        Some(&observe),
     )
     .await?;
     let final_path = final_path(&output)?;
@@ -392,13 +395,18 @@ pub async fn download(
         Format::M4a => &["m4a"],
         Format::Video { .. } => &["mp4", "mkv"],
     };
+    let checked_directory = directory.clone();
     let path = compio::runtime::spawn_blocking(move || {
-        validate_download(&directory, Path::new(&final_path), extensions, limit)
+        validate_download(&checked_directory, Path::new(&final_path), extensions, limit)
     })
     .await
     .map_err(|_| Error::YtDlp("download file check failed".into()))??;
     if matches!(format, Format::M4a) {
         verify_aac(config, &path).await?;
+    }
+    if let Format::Video { height, .. } = format {
+        feedback.preparing_video();
+        return playable::ensure_playable(config, &directory, path, *height, deadline).await;
     }
     Ok(path)
 }

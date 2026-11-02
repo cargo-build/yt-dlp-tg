@@ -48,6 +48,7 @@ struct Download {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DownloadPhase {
     Active,
+    Preparing,
     Complete,
     Cached,
 }
@@ -124,7 +125,7 @@ impl Progress {
         let mut download = self.0.download.borrow_mut();
         match download.phase {
             DownloadPhase::Active => {}
-            DownloadPhase::Complete | DownloadPhase::Cached => return,
+            DownloadPhase::Preparing | DownloadPhase::Complete | DownloadPhase::Cached => return,
         }
         let has_room = download.streams.len() < MAX_STREAMS;
         match download.streams.get_mut(frame.id) {
@@ -143,8 +144,16 @@ impl Progress {
     pub(crate) fn download_finished(&self) {
         let mut download = self.0.download.borrow_mut();
         match download.phase {
-            DownloadPhase::Active => download.phase = DownloadPhase::Complete,
+            DownloadPhase::Active | DownloadPhase::Preparing => download.phase = DownloadPhase::Complete,
             DownloadPhase::Complete | DownloadPhase::Cached => {}
+        }
+    }
+
+    /// MP4 preparation has no invented encoder byte percentage. @req DL-4 DL-11
+    pub(crate) fn preparing_video(&self) {
+        let mut download = self.0.download.borrow_mut();
+        if download.phase == DownloadPhase::Active {
+            download.phase = DownloadPhase::Preparing;
         }
     }
 
@@ -182,6 +191,10 @@ impl Progress {
         let animation = (elapsed.as_millis() / ANIMATION_INTERVAL_MS) % u128::from(BAR_CELLS);
         let download = self.0.download.borrow();
         let (download_marker, download_value) = match download.phase {
+            DownloadPhase::Preparing => (
+                '▶',
+                format!("{} {}", animated_bar(animation), language.text(Text::PreparingVideo)),
+            ),
             DownloadPhase::Active => (
                 '▶',
                 transfer_value(download.sample(), Transfer::Downloading, animation),
@@ -428,6 +441,22 @@ mod tests {
 
     fn english() -> Language {
         Language::from_code(Some("en"))
+    }
+
+    #[test]
+    fn video_preparation_is_visible_without_claiming_encoded_bytes() {
+        let progress = Progress::new(None);
+        progress.observe(b"yt-dlp-tg-progress1|video|finished|100|100|NA");
+        progress.preparing_video();
+        let preparing = progress.render(english());
+        assert!(preparing.contains("Preparing MP4"));
+        assert!(preparing.contains("Sending"));
+        assert!(!preparing.contains('%'));
+        progress.download_finished();
+        assert!(progress.render(english()).contains("100%"));
+        let cached = Progress::cached();
+        cached.preparing_video();
+        assert!(!cached.render(english()).contains("Preparing MP4"));
     }
 
     #[test]

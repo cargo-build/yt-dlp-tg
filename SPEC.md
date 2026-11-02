@@ -29,7 +29,13 @@ operator outside the source repository.
   the change; preserve old state for rollback and pending accepted work.
   Opus remains lossy. Use Telegram voice
   and audio messages respectively, with a meaningful source title, rather than
-  document-only audio. MP4 video uses Telegram's video player; MKV remains a file.
+  document-only audio. Video delivery produces a real, streamable MP4 with
+  H.264/yuv420p video and AAC audio when audio is present. Copy compatible
+  streams; convert incompatible SDR streams on CPU without changing the pinned
+  source selection or raising its height. Do not send MKV as a video substitute.
+  Validate codecs, container, dimensions, final size and faststart before upload.
+  New video cache policies must not replay older document IDs; accepted queued
+  video requests survive the policy upgrade and use the new MP4 pipeline.
   Show M4A music before the explicitly labeled Opus voice choice for both links
   and search results. Embed the selected video's thumbnail, when available, in
   the Opus file without changing native Opus audio packets. No uploaded OCR image
@@ -58,6 +64,11 @@ operator outside the source repository.
   Keep video files within the upload cap. Audio extraction inputs may exceed
   that cap within the same bounded scratch budget; their final audio output
   must still fit the upload cap.
+  Video normalization shares the existing download deadline and bounded job
+  directory with extraction. Conversion may increase file size; menu sizes
+  describe source estimates and the final upload cap remains authoritative.
+  Do not truncate video to force it under the cap. Preparing the MP4 remains
+  visible in the combined progress message before Sending starts.
 - DL-6: Bot prose is localized in English, Chinese, Hindi, Spanish, Arabic,
   French, Portuguese and Russian, chosen from Telegram language_code. Unknown
   languages use English. Source titles and provider names retain their spelling.
