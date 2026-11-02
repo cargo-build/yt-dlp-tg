@@ -31,6 +31,7 @@ use crate::{
     media::{self, Format, Media, Provider},
     ocr,
     queue::Queue,
+    telemetry,
 };
 
 mod edit;
@@ -352,6 +353,10 @@ pub async fn run(config: Config) -> Result<()> {
         } else {
             "direct"
         },
+        access = match &app.config.user_access {
+            crate::config::UserAccess::All => "all",
+            crate::config::UserAccess::Allowlist(_) => "allowlist",
+        },
         "Starting native compio downloader"
     );
     let running = Box::pin(async {
@@ -529,13 +534,36 @@ async fn message(
         language,
         query.into(),
     );
+    let input_url = media::http_url(query);
+    tracing::info!(
+        request_id = session.id,
+        stage = "accepted",
+        source = ?input_url.as_deref().and_then(telemetry::source),
+        "Media request"
+    );
     let _slot = app.acquire_media_slot(&bot, &session).await?;
     session.created = Instant::now();
-    if let Some(url) = media::http_url(query) {
+    if let Some(url) = input_url {
         session.status(&bot, Text::Checking).await?;
         match media::probe(&app.config, &url).await {
-            Ok(media) => session.selected = Some(media.into()),
-            Err(_) => tracing::info!("URL extraction failed; using text search"),
+            Ok(media) => {
+                tracing::info!(
+                    request_id = session.id,
+                    stage = "probe",
+                    outcome = "ok",
+                    source = ?telemetry::source(&media.url),
+                    "Media request"
+                );
+                session.selected = Some(media.into());
+            }
+            Err(error) => tracing::info!(
+                request_id = session.id,
+                stage = "probe",
+                outcome = "search_fallback",
+                reason = telemetry::reason(&error),
+                source = ?telemetry::source(&url),
+                "Media request"
+            ),
         }
     }
     let (body, keyboard) = match session.selected {
@@ -709,6 +737,17 @@ async fn callback(
             }
             None => Err(Error::Telegram("no selected media".into())),
         };
+        match &request {
+            Ok(request) => tracing::info!(
+                request_id = session.id,
+                job_id = %request.id,
+                stage = "download",
+                outcome = "requested",
+                source = ?telemetry::source(&request.media.url),
+                "Media request"
+            ),
+            Err(_) => {}
+        }
         match request {
             Ok(request) => match &app.queue {
                 Some(queue) => {
@@ -801,6 +840,8 @@ async fn callback(
 
 /// Recheck persisted recipient and output authority before sharing the media slot. @req DL-1 DL-14
 async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
+    tracing::info!(job_id = %request.id, stage = "delivery", outcome = "started",
+        source = ?telemetry::source(&request.media.url), "Media request");
     let chat = ChatId(request.chat_id);
     let status = MessageId(request.status_message);
     let result = async {
@@ -834,13 +875,14 @@ async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
         .await
     }
     .await;
+    match &result {
+        Ok(()) => tracing::info!(job_id = %request.id, stage = "delivery", outcome = "sent", "Media request"),
+        Err(error) => tracing::warn!(job_id = %request.id, stage = "delivery", outcome = "failed", reason = telemetry::reason(error), "Media request"),
+    }
     let text = match result {
         Ok(()) => Text::Sent,
         Err(Error::TooLarge) => Text::TooLarge,
-        Err(_) => {
-            tracing::warn!("Media delivery failed");
-            Text::Failed
-        }
+        Err(_) => Text::Failed,
     };
     delivery::progress(bot, chat, status, request.language, text).await;
 }

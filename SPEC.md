@@ -7,7 +7,7 @@ Operational host choices and private deployment evidence are maintained by each
 operator outside the source repository.
 
 - DL-1: Only users permitted by the configured access policy may trigger extraction,
-  search or download. ALLOWED_USER_IDS=* explicitly permits all positive Telegram
+  search or download. ALLOWED_USER_IDS=all explicitly permits all positive Telegram
   user IDs; otherwise a nonempty numeric allowlist is required. Missing, empty
   and malformed settings must fail closed. Public access retains per-user
   callback/correction ownership, queue reauthorization and all media limits.
@@ -86,7 +86,7 @@ operator outside the source repository.
   not require a new public inbound port. Qualify the target binary/runtime before
   cutover and retain a recoverable source deployment until destination startup
   succeeds. Qualify CPU OCR on the target before enabling image input.
-  Repository deployment examples require an explicit numeric allowlist or *;
+  Repository deployment examples require an explicit numeric allowlist or all;
   installed account IDs and credentials belong in private host configuration.
 - DL-11: Acknowledge accepted searches/links before waiting for the media slot
   or starting extraction. Show the actual queued, checking, searching,
@@ -94,6 +94,13 @@ operator outside the source repository.
   or failure. Unsupported input receives an immediate localized explanation and
   a text/link alternative; never imply OCR is running when it is unavailable.
   Preserve authorization and callback ownership before feedback.
+  Operator diagnostics must correlate accepted link requests, extraction
+  outcomes, video availability reasons and download outcomes with request/job
+  identifiers. Log canonical Instagram/YouTube source identities without share
+  queries; other source hosts may be recorded by origin only. Do not log raw
+  query text, arbitrary URL paths, credentials, extractor CDN URLs/headers or
+  raw subprocess/Telegram errors. Successful extraction with unavailable video
+  formats is an explicit diagnostic outcome, not an unobserved silent path.
 - DL-12: Authorized photos and PNG/JPEG/WebP image documents can produce a short
   recognized-text preview through local CPU OCR. Acknowledge first, show actual
   queue/download/recognition stages, and share the existing media semaphore.

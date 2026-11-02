@@ -45,7 +45,7 @@ BOT_TOKEN_FILE=/absolute/private/bot-token ALLOWED_USER_IDS=123456789 ./target/d
 ```
 
 The ID above is a placeholder. Supply your own numeric Telegram ID(s), or set
-`ALLOWED_USER_IDS='*'` explicitly to open the bot to everyone. Keep
+`ALLOWED_USER_IDS=all` explicitly to open the bot to everyone. Keep
 token bytes in a private file or managed environment, never in source or argv.
 Bot menus expire after20minutes and are discarded on restart.
 
@@ -54,7 +54,7 @@ Bot menus expire after20minutes and are discarded on restart.
 | Variable | Meaning/default |
 |---|---|
 | `BOT_TOKEN` / `BOT_TOKEN_FILE` | Token environment value or private file; default file `/run/secrets/GET_MUSIC_VIDEO_BOT` |
-| `ALLOWED_USER_IDS` | Required: positive numeric IDs, comma-separated, or `*` for public access; empty/missing values fail |
+| `ALLOWED_USER_IDS` | Required: positive numeric IDs, comma-separated, or `all` for public access; empty/missing values fail |
 | `MODE` | `polling` or `webhook` |
 | `TG_API_BASE` / `TG_PROXY` | Bot API origin, default api.telegram.org; optional explicit proxy |
 | `LISTEN_ADDR` | `127.0.0.1:8080` for webhooks |
@@ -76,6 +76,18 @@ Empty or partial Iggy settings fail startup; configured broker failures never
 switch to direct delivery. With no Iggy settings, standalone direct delivery
 remains available. Browser credentials are never read implicitly. yt-dlp config
 files/plugins are disabled; its cookie jar must be writable by its owner.
+
+## Diagnostics
+
+The default `RUST_LOG=yt_dlp_tg=info` emits structured request/job IDs, accepted
+link and extraction stages, per-resolution availability reasons, and delivery
+outcomes. Instagram/YouTube video identities remain visible without sharing
+queries. Other hosts are logged by origin only; arbitrary paths, query text,
+CDN URLs/headers, credentials and raw provider errors are excluded. Use the
+request ID to connect intake to availability, then the job ID for delivery.
+`unknown_size`, `too_large` and `missing` distinguish unavailable menu options
+even when extraction succeeded. These are service logs, not a metrics/alerting
+platform; protect and rotate them with the deployment's existing log controls.
 
 ## Durable queue and data
 

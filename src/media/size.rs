@@ -24,10 +24,11 @@ pub(super) async fn supplement(config: &Config, info: &mut Value) -> Result<()> 
         .redirect(cyper::redirect::Policy::none())
         .referer(false);
     if let Some(proxy) = &config.ytdlp_proxy {
-        builder = builder.proxy(
-            cyper::proxy::Proxy::all(proxy)
-                .map_err(|_| Error::Config("invalid YTDLP_PROXY for size inspection".into()))?,
-        );
+        builder =
+            builder
+                .proxy(cyper::proxy::Proxy::all(proxy).map_err(|_| {
+                    Error::Config("invalid YTDLP_PROXY for size inspection".into())
+                })?);
     }
     let client = builder
         .build()
@@ -89,7 +90,7 @@ async fn size(
         .get("content-type")
         .and_then(|value| value.to_str().ok())
         .map(str::to_ascii_lowercase);
-    let encoded = headers.get("content-encoding").is_some_and(|value| {
+    let encoded = headers.get_all("content-encoding").iter().any(|value| {
         value
             .to_str()
             .map_or(true, |value| !value.eq_ignore_ascii_case("identity"))
@@ -101,8 +102,7 @@ async fn size(
             value.starts_with("video/")
                 || value.starts_with("audio/")
                 || value.split(';').next() == Some("application/octet-stream")
-        })
-    {
+        }) {
         false => Ok(None),
         true => Ok(headers
             .get("content-length")
@@ -115,14 +115,19 @@ async fn size(
 fn direct_url(format: &Value) -> Option<String> {
     let protocol = format.get("protocol").and_then(Value::as_str)?;
     if !matches!(protocol, "http" | "https")
-        || format.get("fragments").is_some_and(|value| !value.is_null())
+        || format
+            .get("fragments")
+            .is_some_and(|value| !value.is_null())
     {
         return None;
     }
     let url = http_url(format.get("url").and_then(Value::as_str)?)?;
     let parsed = url::Url::parse(&url).ok()?;
     match parsed.query_pairs().any(|(key, _)| {
-        matches!(key.to_ascii_lowercase().as_str(), "range" | "bytestart" | "byteend")
+        matches!(
+            key.to_ascii_lowercase().as_str(),
+            "range" | "bytestart" | "byteend"
+        )
     }) {
         true => None,
         false => Some(url),

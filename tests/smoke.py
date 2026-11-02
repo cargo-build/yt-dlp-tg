@@ -6,6 +6,7 @@ from email.parser import BytesParser
 from email.policy import default
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import socket
@@ -104,6 +105,7 @@ class Telegram(http.server.BaseHTTPRequestHandler):
         if self.path.endswith('/partial'):
             self.send_header('Content-Range', 'bytes 0-99999/200000')
         if self.path.endswith('/compressed'):
+            self.send_header('Content-Encoding', 'identity')
             self.send_header('Content-Encoding', 'gzip')
         self.end_headers()
 
@@ -277,7 +279,7 @@ def smoke(binary, mode, startup_stop=False, images=False, vision=False, queue_en
             webhook_port = sock.getsockname()[1]
         env = {**os.environ, 'BOT_TOKEN': '1000:fixture', 'ALLOWED_USER_IDS': '42,7', 'TG_API_BASE': f'http://127.0.0.1:{server.server_port}', 'YTDLP_PATH': str(fixture), 'DOWNLOAD_DIR': str(root / 'jobs'), 'MODE': mode, 'LISTEN_ADDR': f'127.0.0.1:{webhook_port}', 'WEBHOOK_PUBLIC_URL': 'https://fixture.invalid', 'NO_PROXY': '127.0.0.1,localhost'}
         if public_access:
-            env['ALLOWED_USER_IDS'] = '*'
+            env['ALLOWED_USER_IDS'] = 'all'
         env['FAKE_HEADER_ORIGIN'] = f'http://127.0.0.1:{server.server_port}'
         env.pop('TG_PROXY', None)
         env.pop('YTDLP_PROXY', None)
@@ -448,9 +450,26 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     pick_video(qualities, height=640)
                     wait('sendvideo')
                     wait('editmessagetext', lambda p: p.get('text') == 'Sent.')
+                    message('https://www.instagram.com/reel/Fixture_123/?tracking=DO_NOT_LOG_ME#DO_NOT_LOG_ME')
+                    menu()
                     process.send_signal(signal.SIGTERM)
                     assert process.wait(timeout=10) == 0
-                    print(f'{mode}: public access/ownership/cache and safe header-only video sizes passed')
+                    log.seek(0)
+                    logged = re.sub(r'\x1b\[[0-9;]*m', '', log.read())
+                    assert 'DO_NOT_LOG_ME' not in logged
+                    assert '/probe/audio' not in logged
+                    assert 'access="all"' in logged
+                    lines = logged.splitlines()
+                    intake = next(line for line in lines if 'Fixture_123' in line and 'stage="accepted"' in line)
+                    request = re.search(r'request_id=(\d+)', intake)[1]
+                    assert any('Fixture_123/' in line and 'stage="probe"' in line and 'outcome="ok"' in line and 'request_id='+request in line for line in lines)
+                    for availability in ('available','unknown_size'):
+                        assert any('stage="video_options"' in line and 'availability="'+availability+'"' in line for line in lines)
+                    assert any('stage="video_selection"' in line and 'reason="unknown_size"' in line for line in lines)
+                    requested = next(line for line in lines if 'stage="download"' in line)
+                    job = re.search(r'job_id=(\d+)', requested)[1]
+                    assert any('stage="delivery"' in line and 'outcome="sent"' in line and 'job_id='+job in line for line in lines)
+                    print(f'{mode}: public access/ownership/cache, safe header sizes and correlated redacted diagnostics passed')
                     return
                 if status_only:
                     message('https://media.invalid/waiting-status')

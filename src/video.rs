@@ -553,7 +553,10 @@ mod tests {
             json!({"format_id":"missing-codecs", "height":640}),
             json!({"format_id":"missing-height", "vcodec":"vp9", "acodec":"none"}),
         ]);
-        assert_eq!(missing_sizes(&metadata).expect("validated metadata"), vec![0, 1]);
+        assert_eq!(
+            missing_sizes(&metadata).expect("validated metadata"),
+            vec![0, 1]
+        );
     }
 
     #[test]

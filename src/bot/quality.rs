@@ -10,6 +10,7 @@ use crate::{
     error::{Error, Result},
     i18n::Text,
     media::{self, Format},
+    telemetry,
     video::{Availability, Choice},
 };
 
@@ -32,14 +33,17 @@ pub(super) async fn prepare(
             .expect("video callback has a selected source");
         match media::video_choices(&app.config, &selected.media).await {
             Ok(choices) => {
+                telemetry::video_options(session.id, &selected.media.url, &choices);
                 session
                     .selected
                     .as_mut()
                     .expect("metadata keeps the selected source")
                     .video_choices = Some(choices)
             }
-            Err(_) => {
-                tracing::warn!("Video availability check failed");
+            Err(error) => {
+                tracing::warn!(request_id = session.id, stage = "video_options", outcome = "failed",
+                    reason = telemetry::reason(&error), source = ?telemetry::source(&selected.media.url),
+                    "Video availability check failed");
                 return Ok((
                     source(session, session.language.text(Text::VideoCheckFailed)),
                     InlineKeyboardMarkup::new([
@@ -167,7 +171,7 @@ pub(super) fn blocked(session: &Session, action: char, index: usize, limit: u64)
         .as_ref()
         .and_then(|selected| selected.video_choices.as_ref())
         .and_then(|choices| choices.get(index));
-    let note = match choice {
+    let (note, reason) = match choice {
         Some(Choice {
             height,
             availability: Availability::Available(selection),
@@ -177,17 +181,19 @@ pub(super) fn blocked(session: &Session, action: char, index: usize, limit: u64)
         Some(Choice {
             availability: Availability::TooLarge(_),
             ..
-        }) => session.language.text(Text::TooLarge),
+        }) => (session.language.text(Text::TooLarge), "too_large"),
         Some(Choice {
             availability: Availability::Unknown,
             ..
-        }) => session.language.text(Text::VideoSizeUnknown),
+        }) => (session.language.text(Text::VideoSizeUnknown), "unknown_size"),
         Some(Choice {
             availability: Availability::Missing,
             ..
-        }) => session.language.text(Text::VideoMissing),
-        _ => session.language.text(Text::Expired),
+        }) => (session.language.text(Text::VideoMissing), "missing"),
+        _ => (session.language.text(Text::Expired), "invalid_selection"),
     };
+    tracing::info!(request_id = session.id, stage = "video_selection", outcome = "unavailable",
+        reason, height = ?choice.map(|choice| choice.height), "Media request");
     Some(note.to_owned())
 }
 

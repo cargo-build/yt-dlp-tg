@@ -12,6 +12,7 @@ mod media;
 mod ocr;
 mod process;
 mod queue;
+mod telemetry;
 mod video;
 
 use crate::{config::Config, error::Result};

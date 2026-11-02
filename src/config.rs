@@ -203,10 +203,12 @@ impl Config {
             .ok_or_else(|| Error::Config("BOT_TOKEN is required".into()))?;
 
         let allow_raw = non_empty(get("ALLOWED_USER_IDS")).ok_or_else(|| {
-            Error::Config("ALLOWED_USER_IDS is required (comma-separated Telegram user IDs or *)".into())
+            Error::Config(
+                "ALLOWED_USER_IDS is required (comma-separated Telegram user IDs or all)".into(),
+            )
         })?;
         let user_access = match allow_raw.trim() {
-            "*" => UserAccess::All,
+            "all" => UserAccess::All,
             raw => UserAccess::Allowlist(parse_user_ids(raw)?),
         };
 
@@ -604,10 +606,10 @@ mod tests {
     }
 
     #[test]
-    fn public_access_requires_an_explicit_standalone_wildcard() {
+    fn public_access_requires_an_explicit_all_policy() {
         let cfg = Config::from_map(map(&[
             ("BOT_TOKEN", "123:abc"),
-            ("ALLOWED_USER_IDS", " * "),
+            ("ALLOWED_USER_IDS", " all "),
         ]))
         .expect("explicit public access");
         assert_eq!(cfg.user_access, UserAccess::All);
@@ -617,7 +619,7 @@ mod tests {
         [0, u64::MAX]
             .into_iter()
             .for_each(|id| assert!(!cfg.user_access.allows(id)));
-        ["", " ", "*,42", "42,*", "all", "0", "-1"]
+        ["", " ", "all,42", "42,all", "ALL", "*", "0", "-1"]
             .into_iter()
             .for_each(|setting| {
                 assert!(
