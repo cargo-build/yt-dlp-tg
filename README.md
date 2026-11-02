@@ -44,7 +44,8 @@ cargo build --locked
 BOT_TOKEN_FILE=/absolute/private/bot-token ALLOWED_USER_IDS=123456789 ./target/debug/yt-dlp-tg
 ```
 
-The ID above is a placeholder. Supply your own numeric Telegram ID(s). Keep
+The ID above is a placeholder. Supply your own numeric Telegram ID(s), or set
+`ALLOWED_USER_IDS='*'` explicitly to open the bot to everyone. Keep
 token bytes in a private file or managed environment, never in source or argv.
 Bot menus expire after20minutes and are discarded on restart.
 
@@ -53,7 +54,7 @@ Bot menus expire after20minutes and are discarded on restart.
 | Variable | Meaning/default |
 |---|---|
 | `BOT_TOKEN` / `BOT_TOKEN_FILE` | Token environment value or private file; default file `/run/secrets/GET_MUSIC_VIDEO_BOT` |
-| `ALLOWED_USER_IDS` | Required positive numeric IDs, comma-separated |
+| `ALLOWED_USER_IDS` | Required: positive numeric IDs, comma-separated, or `*` for public access; empty/missing values fail |
 | `MODE` | `polling` or `webhook` |
 | `TG_API_BASE` / `TG_PROXY` | Bot API origin, default api.telegram.org; optional explicit proxy |
 | `LISTEN_ADDR` | `127.0.0.1:8080` for webhooks |

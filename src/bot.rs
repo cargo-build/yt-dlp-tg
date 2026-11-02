@@ -892,7 +892,7 @@ async fn track_results(app: &App, session: &mut Session) -> (String, InlineKeybo
 }
 
 fn authorized(config: &Config, user: UserId) -> bool {
-    i64::try_from(user.0).is_ok_and(|id| config.allowed_user_ids.contains(&id))
+    config.user_access.allows(user.0)
 }
 
 fn query_text(text: &str) -> &str {

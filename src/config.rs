@@ -14,11 +14,31 @@ pub enum Mode {
     Webhook,
 }
 
+/// Explicit public access or a private allowlist; absence never grants access. @req DL-1
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UserAccess {
+    All,
+    Allowlist(Vec<i64>),
+}
+
+impl UserAccess {
+    /// Keep invalid identities rejected even when the bot is public. @req DL-1
+    pub fn allows(&self, user: u64) -> bool {
+        match i64::try_from(user) {
+            Ok(id) if id > 0 => match self {
+                Self::All => true,
+                Self::Allowlist(ids) => ids.contains(&id),
+            },
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub bot_token: String,
-    /// Telegram user IDs allowed to use the bot; everyone else is rejected.
-    pub allowed_user_ids: Vec<i64>,
+    /// Explicitly selected public or restricted Telegram access.
+    pub user_access: UserAccess,
     pub mode: Mode,
     /// Bot API base URL; point at a local Bot API server to lift the 50 MiB limit.
     pub tg_api_base: String,
@@ -183,9 +203,12 @@ impl Config {
             .ok_or_else(|| Error::Config("BOT_TOKEN is required".into()))?;
 
         let allow_raw = non_empty(get("ALLOWED_USER_IDS")).ok_or_else(|| {
-            Error::Config("ALLOWED_USER_IDS is required (comma-separated Telegram user IDs)".into())
+            Error::Config("ALLOWED_USER_IDS is required (comma-separated Telegram user IDs or *)".into())
         })?;
-        let allowed_user_ids = parse_user_ids(&allow_raw)?;
+        let user_access = match allow_raw.trim() {
+            "*" => UserAccess::All,
+            raw => UserAccess::Allowlist(parse_user_ids(raw)?),
+        };
 
         let mode = match non_empty(get("MODE")).as_deref() {
             None | Some("polling") => Mode::Polling,
@@ -221,7 +244,7 @@ impl Config {
 
         Ok(Self {
             bot_token: bot_token.trim().to_owned(),
-            allowed_user_ids,
+            user_access,
             mode,
             tg_api_base: non_empty(get("TG_API_BASE")).unwrap_or_else(|| DEFAULT_API_BASE.into()),
             listen_addr: non_empty(get("LISTEN_ADDR"))
@@ -581,6 +604,34 @@ mod tests {
     }
 
     #[test]
+    fn public_access_requires_an_explicit_standalone_wildcard() {
+        let cfg = Config::from_map(map(&[
+            ("BOT_TOKEN", "123:abc"),
+            ("ALLOWED_USER_IDS", " * "),
+        ]))
+        .expect("explicit public access");
+        assert_eq!(cfg.user_access, UserAccess::All);
+        [1, 42, 99, i64::MAX as u64]
+            .into_iter()
+            .for_each(|id| assert!(cfg.user_access.allows(id)));
+        [0, u64::MAX]
+            .into_iter()
+            .for_each(|id| assert!(!cfg.user_access.allows(id)));
+        ["", " ", "*,42", "42,*", "all", "0", "-1"]
+            .into_iter()
+            .for_each(|setting| {
+                assert!(
+                    Config::from_map(map(&[
+                        ("BOT_TOKEN", "123:abc"),
+                        ("ALLOWED_USER_IDS", setting),
+                    ]))
+                    .is_err(),
+                    "rejected setting {setting:?}"
+                );
+            });
+    }
+
+    #[test]
     fn webhook_mode_requires_public_url() {
         let err = Config::from_map(map(&[
             ("BOT_TOKEN", "123:abc"),
@@ -599,7 +650,10 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(cfg.mode, Mode::Polling);
-        assert_eq!(cfg.allowed_user_ids, vec![42, 7]);
+        assert_eq!(cfg.user_access, UserAccess::Allowlist(vec![42, 7]));
+        assert!(cfg.user_access.allows(42));
+        assert!(cfg.user_access.allows(7));
+        assert!(!cfg.user_access.allows(99));
         assert_eq!(cfg.tg_api_base, "https://api.telegram.org");
         assert_eq!(cfg.listen_addr, "127.0.0.1:8080");
         assert_eq!(cfg.webhook_path, "tg-webhook");

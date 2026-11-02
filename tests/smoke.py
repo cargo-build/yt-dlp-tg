@@ -60,7 +60,12 @@ elif '--dump-single-json' in a:
         ]
         if operand.endswith('/format-error'): formats = 42
         if operand.endswith('/no-formats'): formats = []
+        if operand.endswith('/header-sizes'):
+            origin = os.environ['FAKE_HEADER_ORIGIN']
+            formats = [{'format_id':'a','vcodec':'none','acodec':'mp4a','protocol':'http','url':origin+'/probe/audio'}]
+            formats += [{'format_id':'v'+str(height),'height':height,'vcodec':'avc1','acodec':'none','protocol':'http','url':origin+'/probe/'+kind} for height,kind in [(640,'video'),(720,'partial'),(1080,'compressed'),(480,'missing'),(360,'error'),(240,'html')]]
         metadata = {'title':'Direct media','webpage_url':operand,'formats':formats}
+        if operand.endswith('/header-sizes'): metadata['http_headers'] = {'Referer':'https://fixture.invalid/'}
         if urllib.parse.urlparse(operand).hostname in ('youtu.be','www.youtube.com','m.youtube.com','music.youtube.com'):
             metadata.update(id='dQw4w9WgXcQ', extractor_key='Youtube')
         print(json.dumps(metadata))
@@ -88,6 +93,20 @@ else:
 class Telegram(http.server.BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
+    def do_HEAD(self):
+        self.server.state.setdefault('head_requests', []).append(self.path)
+        assert self.headers.get('Referer') == 'https://fixture.invalid/'
+        assert self.headers.get('Accept-Encoding') == 'identity'
+        self.send_response(403 if self.path.endswith('/error') else 200)
+        self.send_header('Content-Type', 'text/html' if self.path.endswith('/html') else 'video/mp4')
+        if not self.path.endswith('/missing'):
+            self.send_header('Content-Length', '100000')
+        if self.path.endswith('/partial'):
+            self.send_header('Content-Range', 'bytes 0-99999/200000')
+        if self.path.endswith('/compressed'):
+            self.send_header('Content-Encoding', 'gzip')
+        self.end_headers()
+
     def handle(self):
         try:
             super().handle()
@@ -98,6 +117,10 @@ class Telegram(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path.startswith('/probe/'):
+            self.server.state.setdefault('probe_gets', []).append(self.path)
+            self.send_error(405)
+            return
         name = urllib.parse.unquote(self.path).rsplit('/', 1)[-1]
         state = self.server.state
         state.setdefault('image_downloads', []).append(name)
@@ -237,7 +260,7 @@ class Telegram(http.server.BaseHTTPRequestHandler):
             pass
 
 
-def smoke(binary, mode, startup_stop=False, images=False, vision=False, queue_env=None, broker_control=None, status_only=False):
+def smoke(binary, mode, startup_stop=False, images=False, vision=False, queue_env=None, broker_control=None, status_only=False, public_access=False):
     state = {'condition': threading.Condition(), 'updates': [], 'events': [], 'sequence': 100, 'webhook': None, 'delay_setup': startup_stop, 'setup_started': threading.Event(), 'release_setup': threading.Event(), 'files': {}, 'uploads': 0, 'reject': {}, 'rejections': 0}
     state['reject_duplicate_edits'] = vision
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Telegram)
@@ -253,6 +276,9 @@ def smoke(binary, mode, startup_stop=False, images=False, vision=False, queue_en
             sock.bind(('127.0.0.1', 0))
             webhook_port = sock.getsockname()[1]
         env = {**os.environ, 'BOT_TOKEN': '1000:fixture', 'ALLOWED_USER_IDS': '42,7', 'TG_API_BASE': f'http://127.0.0.1:{server.server_port}', 'YTDLP_PATH': str(fixture), 'DOWNLOAD_DIR': str(root / 'jobs'), 'MODE': mode, 'LISTEN_ADDR': f'127.0.0.1:{webhook_port}', 'WEBHOOK_PUBLIC_URL': 'https://fixture.invalid', 'NO_PROXY': '127.0.0.1,localhost'}
+        if public_access:
+            env['ALLOWED_USER_IDS'] = '*'
+        env['FAKE_HEADER_ORIGIN'] = f'http://127.0.0.1:{server.server_port}'
         env.pop('TG_PROXY', None)
         env.pop('YTDLP_PROXY', None)
         for key in tuple(env):
@@ -386,6 +412,46 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                 return chosen
 
             try:
+                if public_access:
+                    message('/start', id=99, chat=99)
+                    assert 'Send a video link' in wait('sendmessage', lambda p: p.get('chat_id') == 99)[1]['text']
+                    message('https://media.invalid/public', id=99, chat=99)
+                    selected = menu(chat=99)
+                    press(selected, 'm', id=7)
+                    wait('answercallbackquery', lambda p: 'expired' in p.get('text', ''))
+                    assert state['uploads'] == downloads() == 0, 'public access authorized a foreign callback'
+                    press(selected, 'm', id=99)
+                    first = wait('sendaudio', lambda p: p.get('chat_id') == 99)
+                    wait('editmessagetext', lambda p: p.get('chat_id') == 99 and p.get('text') == 'Sent.')
+                    message('https://media.invalid/public')
+                    shared = menu()
+                    press(shared, 'm')
+                    reused = wait('sendaudio', lambda p: p.get('chat_id') == 42)
+                    wait('editmessagetext', lambda p: p.get('text') == 'Sent.')
+                    assert reused[1]['audio'] == first[2]['audio']['file_id']
+                    assert state['uploads'] == downloads() == 1, 'public users did not share the typed cache'
+                    message('https://media.invalid/header-sizes')
+                    header_menu = menu()
+                    press(header_menu, 'v')
+                    qualities = menu()
+                    rows = qualities[1]['reply_markup']['inline_keyboard']
+                    labels = [button['text'] for row in rows for button in row]
+                    assert any(label.startswith('640p ') and 'unavailable' not in label for label in labels)
+                    for height in (1080,720,480,360,240):
+                        assert any(label.startswith(str(height)+'p ') and 'unavailable' in label for label in labels)
+                    assert len(state['head_requests']) == 7
+                    assert not state.get('probe_gets'), 'menu discovery fetched a media body'
+                    before = downloads()
+                    pick_video(qualities, height=720)
+                    wait('answercallbackquery')
+                    assert downloads() == before
+                    pick_video(qualities, height=640)
+                    wait('sendvideo')
+                    wait('editmessagetext', lambda p: p.get('text') == 'Sent.')
+                    process.send_signal(signal.SIGTERM)
+                    assert process.wait(timeout=10) == 0
+                    print(f'{mode}: public access/ownership/cache and safe header-only video sizes passed')
+                    return
                 if status_only:
                     message('https://media.invalid/waiting-status')
                     selected = menu()
@@ -793,6 +859,7 @@ if __name__ == '__main__':
             continue
         if '--startup-only' not in sys.argv:
             smoke(binary, mode)
+            smoke(binary, mode, public_access=True)
             smoke(binary, mode, images=True)
             smoke(binary, mode, vision=True)
         smoke(binary, mode, startup_stop=True)

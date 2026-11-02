@@ -6,7 +6,11 @@ Authority: this specification defines the generic application contracts.
 Operational host choices and private deployment evidence are maintained by each
 operator outside the source repository.
 
-- DL-1: Only configured Telegram users may trigger extraction, search or download.
+- DL-1: Only users permitted by the configured access policy may trigger extraction,
+  search or download. ALLOWED_USER_IDS=* explicitly permits all positive Telegram
+  user IDs; otherwise a nonempty numeric allowlist is required. Missing, empty
+  and malformed settings must fail closed. Public access retains per-user
+  callback/correction ownership, queue reauthorization and all media limits.
   The identity-only /id command may return the requester's numeric ID without
   starting media work.
 - DL-2: HTTP(S) URL support is determined by the installed yt-dlp extractors,
@@ -34,7 +38,13 @@ operator outside the source repository.
   known resolution/size options; oversized and missing resolutions say
   unavailable directly on their buttons. Include audio when estimating split
   video streams and label estimates honestly. If no usable size estimate is
-  available, mark the resolution unavailable before download. Download only the selected safe
+  available, mark the resolution unavailable before download.
+  For direct HTTP media formats missing size metadata, bounded header-only
+  requests may obtain a positive whole-file Content-Length using the extractor's
+  request headers and configured media proxy. Never download a body to populate
+  the menu. Reject partial/compressed/error/non-media responses; missing sizes
+  remain unavailable. Preserve the height cap and include the audio size.
+  Download only the selected safe
   format IDs at the selected height, with no larger fallback. Unavailable
   callbacks explain the reason without starting media work or invalidating the
   valid menu. Bound temporary download growth and preserve final-size rejection,
@@ -76,7 +86,7 @@ operator outside the source repository.
   not require a new public inbound port. Qualify the target binary/runtime before
   cutover and retain a recoverable source deployment until destination startup
   succeeds. Qualify CPU OCR on the target before enabling image input.
-  Repository deployment examples require explicit operator allowlist input;
+  Repository deployment examples require an explicit numeric allowlist or *;
   installed account IDs and credentials belong in private host configuration.
 - DL-11: Acknowledge accepted searches/links before waiting for the media slot
   or starting extraction. Show the actual queued, checking, searching,

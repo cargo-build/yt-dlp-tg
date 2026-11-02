@@ -84,6 +84,22 @@ pub fn choices(metadata: &serde_json::Value, max_bytes: u64) -> Result<Vec<Choic
         .collect())
 }
 
+/// Reuse format validation when selecting direct streams needing a size probe. @req DL-5
+pub fn missing_sizes(metadata: &Value) -> Result<Vec<usize>> {
+    let duration = metadata.get("duration").and_then(positive_f64);
+    Ok(format_list(metadata)?
+        .into_iter()
+        .enumerate()
+        .filter_map(|(position, value)| parse_format(value, duration, position))
+        .filter(|format| {
+            format.size.is_none()
+                && (matches!(format.stream, Stream::Audio(_))
+                    || format.height.is_some_and(|height| height <= MAX_HEIGHT))
+        })
+        .map(|format| format.position)
+        .collect())
+}
+
 #[derive(Debug, Clone, Copy)]
 struct PlanFormat<'a> {
     position: usize,
@@ -525,6 +541,19 @@ mod tests {
             .find(|choice| choice.height == height)
             .expect("standard height row exists")
             .availability
+    }
+
+    #[test]
+    fn missing_sizes_reuses_codec_height_and_known_size_validation() {
+        let metadata = metadata(vec![
+            json!({"format_id":"audio", "vcodec":"none", "acodec":"aac"}),
+            json!({"format_id":"video", "height":960, "vcodec":"vp9", "acodec":"none"}),
+            muxed_format("known", 720, 900_000),
+            json!({"format_id":"oversized-height", "height":1920, "vcodec":"vp9", "acodec":"none"}),
+            json!({"format_id":"missing-codecs", "height":640}),
+            json!({"format_id":"missing-height", "vcodec":"vp9", "acodec":"none"}),
+        ]);
+        assert_eq!(missing_sizes(&metadata).expect("validated metadata"), vec![0, 1]);
     }
 
     #[test]

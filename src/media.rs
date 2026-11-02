@@ -1,5 +1,7 @@
 //! Bounded yt-dlp processes and validated media metadata. @req DL-2 DL-4 DL-5 DL-8
 
+mod size;
+
 use std::{
     collections::HashSet,
     io,
@@ -155,7 +157,8 @@ pub async fn probe(config: &Config, url: &str) -> Result<Media> {
 pub async fn video_choices(config: &Config, media: &Media) -> Result<Vec<video::Choice>> {
     let output = metadata(config, &media.url).await?;
     parse_probe(&output)?;
-    let info = serde_json::from_slice(&output)?;
+    let mut info = serde_json::from_slice(&output)?;
+    size::supplement(config, &mut info).await?;
     video::choices(&info, config.max_upload_bytes)
 }
 
