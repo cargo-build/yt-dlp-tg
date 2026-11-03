@@ -1,26 +1,52 @@
-//! Count file bytes at completed reads without buffering the upload. @req DL-11/DL-8
+//! Load one capped output into RAM and count subsequent body demand. @req DL-11/DL-8
 
 use std::io::Cursor;
 
-use compio::{BufResult, buf::IoBufMut, fs::File, io::AsyncRead};
+use compio::{BufResult, buf::{IntoInner, IoBuf, IoBufMut}, fs::File, io::{AsyncRead, AsyncReadAt, AsyncReadAtExt}};
 
-use crate::{progress::Progress, telemetry::transfer::Upload};
+use crate::{error::{Error, Result}, progress::Progress, telemetry::transfer::Upload};
 
-/// The local reader preserves owned InputFile streaming on compio. @req DL-11/DL-8
+/// A bounded exact read avoids geometric growth and rejects changed input sizes. @req DL-8 DL-11
+pub(crate) async fn load(file: File, expected: u64, limit: u64) -> Result<Vec<u8>> {
+    match expected {
+        0 => return Err(Error::YtDlp("upload input is empty".into())),
+        bytes if bytes > limit => return Err(Error::TooLarge),
+        _ => {}
+    }
+    let metadata = file.metadata().await?;
+    if !metadata.is_file() || metadata.len() != expected {
+        return Err(Error::YtDlp("upload input changed before buffering".into()));
+    }
+    let size = usize::try_from(expected)
+        .map_err(|_| Error::Process("upload buffer exceeds address space".into()))?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(size)
+        .map_err(|_| Error::Process("cannot allocate upload buffer".into()))?;
+    let BufResult(read, bytes) = file.read_exact_at(bytes.slice(..size), 0).await;
+    read?;
+    let bytes = bytes.into_inner();
+    let BufResult(extra, _) = file.read_at(Vec::with_capacity(1), expected).await;
+    if extra? != 0 || file.metadata().await?.len() != expected {
+        return Err(Error::YtDlp("upload input changed while buffering".into()));
+    }
+    Ok(bytes)
+}
+
+/// Moving the buffer keeps chunked progress without another file read or clone. @req DL-11/DL-8
 pub(crate) fn counted(
-    file: File,
+    bytes: Vec<u8>,
     progress: Progress,
     diagnostics: Upload,
 ) -> impl AsyncRead + 'static {
     Counted {
-        reader: Cursor::new(file),
+        reader: Cursor::new(bytes),
         progress,
         diagnostics,
     }
 }
 
 struct Counted {
-    reader: Cursor<File>,
+    reader: Cursor<Vec<u8>>,
     progress: Progress,
     diagnostics: Upload,
 }
@@ -45,15 +71,18 @@ mod tests {
     use crate::i18n::Language;
 
     #[compio::test]
-    async fn completed_reads_stream_the_original_file_and_count_actual_bytes() {
+    async fn full_buffer_survives_source_deletion_and_counts_actual_body_reads() {
         let directory = tempfile::tempdir().expect("temporary input directory");
         let path = directory.path().join("input");
         let content = b"native upload bytes";
         std::fs::write(&path, content).expect("write fixture");
+        let bytes = load(File::open(&path).await.expect("open fixture"), content.len() as u64, content.len() as u64)
+            .await.expect("load exact cap");
+        std::fs::remove_file(&path).expect("remove original before any body demand");
         let progress = Progress::new(None);
         progress.sending(Some(content.len() as u64));
         let mut reader = counted(
-            File::open(&path).await.expect("open fixture"),
+            bytes,
             progress.clone(),
             Upload::new(content.len() as u64),
         );
@@ -81,24 +110,16 @@ mod tests {
     }
 
     #[compio::test]
-    async fn failed_reads_preserve_the_buffer_and_do_not_advance_progress() {
-        let directory = tempfile::tempdir().expect("temporary directory input");
-        let progress = Progress::new(None);
-        progress.sending(Some(100));
-        let file = File::open(directory.path())
-            .await
-            .expect("open directory fixture");
-        let mut reader = counted(file, progress.clone(), Upload::new(100));
-        let buffer = Vec::with_capacity(7);
-        let capacity = buffer.capacity();
-        let BufResult(read, buffer) = reader.read(buffer).await;
-        assert!(read.is_err(), "directories are not readable file payloads");
-        assert_eq!(buffer.capacity(), capacity);
-        assert!(buffer.is_empty());
-        assert!(
-            progress
-                .render(Language::from_code(Some("en")))
-                .contains("0% · 0 B / 100 B")
-        );
+    async fn rejects_empty_oversized_changed_and_non_file_inputs() {
+        let directory = tempfile::tempdir().expect("temporary input directory");
+        let path = directory.path().join("input");
+        std::fs::write(&path, b"12345").expect("write fixture");
+        for (expected, limit) in [(0, 5), (6, 5), (4, 8), (6, 8)] {
+            let result = load(File::open(&path).await.expect("open fixture"), expected, limit).await;
+            assert!(result.is_err(), "invalid expected length {expected}/{limit}");
+            if expected > limit { assert!(matches!(result, Err(Error::TooLarge))); }
+        }
+        let file = File::open(directory.path()).await.expect("open directory fixture");
+        assert!(load(file, 1, 5).await.is_err());
     }
 }

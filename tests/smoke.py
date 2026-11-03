@@ -562,15 +562,16 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     assert len(summaries)==1, 'cached send invented an upload'
                     summary=summaries[0]
                     assert 'body_bytes=8388608' in summary and 'expected_bytes=8388608' in summary
-                    assert 'file_read_errors=0' in summary and 'file_read_pending=false' in summary
+                    assert 'body_read_errors=0' in summary and 'body_read_pending=false' in summary
                     tail=float(re.search(r'after_body_ms=Some\(([^)]+)\)',summary)[1])
                     gap=float(re.search(r'body_gap_max_ms=([0-9.eE+-]+)',summary)[1])
                     assert tail>=1000, ('delayed API reply was not separated',summary)
                     assert gap>=10, ('body backpressure was not observed',summary)
                     assert 'timer_samples=0' not in summary and 'request_poll_max_us=' in summary
-                    for component in ('metadata','source_download','file_open','cache_write','cached_send'):
+                    for component in ('metadata','source_download','file_open','upload_buffer_read','cache_write','cached_send'):
                         assert f'component="{component}"' in logged and 'stage="transfer_phase"' in logged
                     assert 'stage="ring_diagnostics"' in logged
+                    assert logged.count('stage="upload_buffer"')==1 and 'buffer_bytes=8388608' in logged
                     assert '1000:fixture' not in logged and str(root) not in logged
                     print(f'{mode}: transfer boundaries body_bytes=8388608 body_gap_max_ms={gap:.3f} after_body_ms={tail:.3f}; cached reuse performed no upload')
                     for url in ('opus-only','aac-mismatch'):

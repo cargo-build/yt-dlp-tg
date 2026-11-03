@@ -119,7 +119,7 @@ operator outside the source repository.
   formats is an explicit diagnostic outcome, not an unobserved silent path.
   Split metadata, source download, MP4 normalization, cache and file-open times
   from upload time. Upload diagnostics record bytes handed to the HTTP body,
-  file-read await time, gaps between body reads, synchronous request-poll time,
+  RAM-body read time, gaps between body reads, synchronous request-poll time,
   executor timer delay and elapsed time after all expected file bytes were read.
   These are application boundaries, not TCP acknowledgements or isolated kernel,
   TLS or server timings. Emit bounded numeric summaries at completion/failure/
@@ -133,9 +133,16 @@ operator outside the source repository.
   existing status message, with progress updates every3.5seconds. Use observed
   bytes/known totals; distinguish estimates, pending work and indeterminate
   totals. File-ID reuse must not pretend to transfer a file again. Keep byte
-  streams bounded and unbuffered, aggregate split downloads, and preserve work
+  HTTP body chunks bounded, aggregate split downloads, and preserve work
   when cosmetic edits fail. Progress edits must not stall child pipe draining
   or uploads, and the updater ends before terminal success/failure status.
+  A cache-miss active worker loads its validated output fully into one RAM
+  buffer before HTTP upload. Enforce the current API upload cap and reject
+  empty, oversized, truncated or grown inputs before sending. The existing
+  media slot bounds live buffers to one; queued jobs retain request metadata,
+  and cache hits reuse Telegram IDs without loading media. File loading is a
+  separate measured phase. RAM ownership must survive until the request drops
+  and be released on success, error and cancellation without media cloning.
 - DL-12: Authorized photos and PNG/JPEG/WebP image documents can produce a short
   recognized-text preview through local CPU OCR. Acknowledge first, show actual
   queue/download/recognition stages, and share the existing media semaphore.

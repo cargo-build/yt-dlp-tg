@@ -100,7 +100,7 @@ even when extraction succeeded. These are service logs, not a metrics/alerting
 platform; protect and rotate them with the deployment's existing log controls.
 
 `transfer_phase` separates metadata, source download, MP4 preparation, cache,
-file open, cached sends and slot wait. Waiting-notice delivery is timed separately
+file open, RAM-buffer loading, cached sends and slot wait. Waiting-notice delivery is timed separately
 from slot contention. Repeated metadata extractions have separate events.
 `upload_diagnostics` reports the actual file bytes
 read into the owned HTTP body, read-await time, gaps between reads, synchronous
@@ -110,7 +110,15 @@ every30seconds during long sends. No per-chunk logs or extra runtime is used.
 `ring_diagnostics` is a bounded, best-effort numeric snapshot of this process's
 Linux ring heads/tails, without raw fdinfo or addresses.
 
-Large `file_read_await_us` includes I/O completion and scheduling delay; large
+Each active cache-miss worker loads one complete capped output into RAM before
+sending. The shared media slot limits this to one file buffer; Iggy retains
+only request metadata for waiting jobs. Budget one file (up to the configured
+API cap) plus HTTP/allocator/runtime overhead per worker. Cached file-ID sends
+allocate no media buffer. The buffer is moved into the existing chunked reader,
+preserving progress and transport framing. `upload_buffer_read` measures disk
+loading separately; body-read timings now describe RAM reads.
+
+Large `body_read_await_us` includes RAM copying and scheduling; large
 `body_gap_ms` means the consumer stopped asking for file bytes. Long polls or
 timer lag can indicate executor contention. `after_body_ms` still includes
 buffer draining, network transfer and API processing. Body bytes are not TCP
