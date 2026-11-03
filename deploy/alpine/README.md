@@ -26,6 +26,13 @@ application boundaries and cached reuse without another upload. Ring sampling
 needs no additional package or privilege and is best effort. See the project's
 Diagnostics section for field meanings and attribution limits.
 
+The active worker buffers one complete validated output in RAM before upload.
+Queued jobs keep metadata only; account for one configured upload cap plus
+transport/runtime overhead per worker. Cache hits allocate no media buffer.
+The loader uses compio and a separate measured timeout; it rejects changed
+sizes instead of uploading partial buffers. HTTP progress still follows body
+demand in chunks, and RAM buffers are moved rather than cloned.
+
 ## Optional local Iggy service
 
 Use the same source pin as Cargo.toml:

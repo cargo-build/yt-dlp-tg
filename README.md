@@ -118,7 +118,7 @@ allocate no media buffer. The buffer is moved into the existing chunked reader,
 preserving progress and transport framing. `upload_buffer_read` measures disk
 loading separately; body-read timings now describe RAM reads.
 
-Large `body_read_await_us` includes RAM copying and scheduling; large
+`body_read_await_us` measures the RAM reader rather than disk I/O; large
 `body_gap_ms` means the consumer stopped asking for file bytes. Long polls or
 timer lag can indicate executor contention. `after_body_ms` still includes
 buffer draining, network transfer and API processing. Body bytes are not TCP

@@ -2,9 +2,18 @@
 
 use std::io::Cursor;
 
-use compio::{BufResult, buf::{IntoInner, IoBuf, IoBufMut}, fs::File, io::{AsyncRead, AsyncReadAt, AsyncReadAtExt}};
+use compio::{
+    BufResult,
+    buf::{IntoInner, IoBuf, IoBufMut},
+    fs::File,
+    io::{AsyncRead, AsyncReadAt, AsyncReadAtExt},
+};
 
-use crate::{error::{Error, Result}, progress::Progress, telemetry::transfer::Upload};
+use crate::{
+    error::{Error, Result},
+    progress::Progress,
+    telemetry::transfer::Upload,
+};
 
 /// A bounded exact read avoids geometric growth and rejects changed input sizes. @req DL-8 DL-11
 pub(crate) async fn load(file: File, expected: u64, limit: u64) -> Result<Vec<u8>> {
@@ -20,7 +29,8 @@ pub(crate) async fn load(file: File, expected: u64, limit: u64) -> Result<Vec<u8
     let size = usize::try_from(expected)
         .map_err(|_| Error::Process("upload buffer exceeds address space".into()))?;
     let mut bytes = Vec::new();
-    bytes.try_reserve_exact(size)
+    bytes
+        .try_reserve_exact(size)
         .map_err(|_| Error::Process("cannot allocate upload buffer".into()))?;
     let BufResult(read, bytes) = file.read_exact_at(bytes.slice(..size), 0).await;
     read?;
@@ -76,16 +86,17 @@ mod tests {
         let path = directory.path().join("input");
         let content = b"native upload bytes";
         std::fs::write(&path, content).expect("write fixture");
-        let bytes = load(File::open(&path).await.expect("open fixture"), content.len() as u64, content.len() as u64)
-            .await.expect("load exact cap");
+        let bytes = load(
+            File::open(&path).await.expect("open fixture"),
+            content.len() as u64,
+            content.len() as u64,
+        )
+        .await
+        .expect("load exact cap");
         std::fs::remove_file(&path).expect("remove original before any body demand");
         let progress = Progress::new(None);
         progress.sending(Some(content.len() as u64));
-        let mut reader = counted(
-            bytes,
-            progress.clone(),
-            Upload::new(content.len() as u64),
-        );
+        let mut reader = counted(bytes, progress.clone(), Upload::new(content.len() as u64));
         let BufResult(read, first) = reader.read(Vec::with_capacity(4)).await;
         assert_eq!(read.expect("first read"), 4);
         assert_eq!(first, b"nati");
@@ -115,11 +126,23 @@ mod tests {
         let path = directory.path().join("input");
         std::fs::write(&path, b"12345").expect("write fixture");
         for (expected, limit) in [(0, 5), (6, 5), (4, 8), (6, 8)] {
-            let result = load(File::open(&path).await.expect("open fixture"), expected, limit).await;
-            assert!(result.is_err(), "invalid expected length {expected}/{limit}");
-            if expected > limit { assert!(matches!(result, Err(Error::TooLarge))); }
+            let result = load(
+                File::open(&path).await.expect("open fixture"),
+                expected,
+                limit,
+            )
+            .await;
+            assert!(
+                result.is_err(),
+                "invalid expected length {expected}/{limit}"
+            );
+            if expected > limit {
+                assert!(matches!(result, Err(Error::TooLarge)));
+            }
         }
-        let file = File::open(directory.path()).await.expect("open directory fixture");
+        let file = File::open(directory.path())
+            .await
+            .expect("open directory fixture");
         assert!(load(file, 1, 5).await.is_err());
     }
 }

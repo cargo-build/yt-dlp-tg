@@ -268,12 +268,15 @@ mod tests {
         );
         let pid =
             std::fs::read_to_string(directory.path().join("pid")).expect("descendant PID recorded");
-        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-            assert_eq!(
-                stat.split_whitespace().nth(2),
-                Some("Z"),
-                "descendant must not remain running"
-            );
+        let stopped_by = std::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Ok(stat) if stat.split_whitespace().nth(2) == Some("Z") => break,
+                state => assert!(std::time::Instant::now() < stopped_by,
+                    "killed descendant must stop within the bounded wait: {state:?}"),
+            }
+            compio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 

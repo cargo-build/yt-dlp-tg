@@ -120,14 +120,28 @@ pub async fn deliver(
             Ok(compio::fs::File::open(&path).await?)
         })
         .await?;
-        let bytes = tracked(bot, request.chat, request.status, request.language, &feedback,
+        let bytes = tracked(
+            bot,
+            request.chat,
+            request.status,
+            request.language,
+            &feedback,
             telemetry::phase("upload_buffer_read", async {
-                compio::time::timeout(Duration::from_secs(config.process_timeout_secs),
-                    upload::load(opened, size, config.max_upload_bytes))
-                    .await.map_err(|_| Error::Timeout)?
-            })).await?;
-        tracing::info!(stage = "upload_buffer", backing = "memory", buffer_bytes = bytes.len(),
-            "Loaded active queued output");
+                compio::time::timeout(
+                    Duration::from_secs(config.process_timeout_secs),
+                    upload::load(opened, size, config.max_upload_bytes),
+                )
+                .await
+                .map_err(|_| Error::Timeout)?
+            }),
+        )
+        .await?;
+        tracing::info!(
+            stage = "upload_buffer",
+            backing = "memory",
+            buffer_bytes = bytes.len(),
+            "Loaded active queued output"
+        );
         let diagnostics = Upload::new(size);
         let file = InputFile::read(upload::counted(
             bytes,
