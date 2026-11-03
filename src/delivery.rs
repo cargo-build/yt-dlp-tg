@@ -116,55 +116,44 @@ pub async fn deliver(
         }
         let (kind, extension) = upload_kind(&request.format, &path)?;
         feedback.sending(Some(size));
-        let opened = telemetry::phase("file_open", async {
-            Ok(compio::fs::File::open(&path).await?)
-        })
-        .await?;
-        let bytes = tracked(
-            bot,
-            request.chat,
-            request.status,
-            request.language,
-            &feedback,
-            telemetry::phase("upload_buffer_read", async {
-                compio::time::timeout(
-                    Duration::from_secs(config.process_timeout_secs),
-                    upload::load(opened, size, config.max_upload_bytes),
-                )
-                .await
-                .map_err(|_| Error::Timeout)?
-            }),
-        )
-        .await?;
-        tracing::info!(
-            stage = "upload_buffer",
-            backing = "memory",
-            buffer_bytes = bytes.len(),
-            "Loaded active queued output"
-        );
-        let diagnostics = Upload::new(size);
-        let file = InputFile::read(upload::counted(
-            bytes,
-            feedback.clone(),
-            diagnostics.clone(),
-        ))
-        .file_name(upload_name(&request.media.title, extension));
         let sent = tracked(
             bot,
             request.chat,
             request.status,
             request.language,
             &feedback,
-            diagnostics.run(send_typed(
+            async {
+                let opened = telemetry::phase("file_open", async {
+                    Ok(compio::fs::File::open(&path).await?)
+                }).await?;
+                let bytes = telemetry::phase("upload_buffer_read", async {
+                    compio::time::timeout(Duration::from_secs(config.process_timeout_secs),
+                        upload::load(opened, size, config.max_upload_bytes))
+                        .await.map_err(|_| Error::Timeout)?
+                }).await?;
+                tracing::info!(
+            stage = "upload_buffer",
+            backing = "memory",
+            buffer_bytes = bytes.len(),
+            "Loaded active queued output"
+                );
+                let diagnostics = Upload::new(size);
+                let file = InputFile::read(upload::counted(
+            bytes,
+            feedback.clone(),
+            diagnostics.clone(),
+        ))
+                .file_name(upload_name(&request.media.title, extension));
+                diagnostics.run(send_typed(
                 bot,
                 request.chat,
                 &request.format,
                 file,
                 &request.media.title,
-            )),
+                )).await.map_err(|_| Error::Telegram("media upload failed".into()))
+            },
         )
-        .await
-        .map_err(|_| Error::Telegram("media upload failed".into()))?;
+        .await?;
         let cached = response_file(&sent, kind)?;
         let kind = cached.kind.clone();
         telemetry::phase("cache_write", cache.put(key, cached)).await?;
