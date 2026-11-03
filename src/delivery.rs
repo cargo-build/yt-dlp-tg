@@ -125,32 +125,40 @@ pub async fn deliver(
             async {
                 let opened = telemetry::phase("file_open", async {
                     Ok(compio::fs::File::open(&path).await?)
-                }).await?;
+                })
+                .await?;
                 let bytes = telemetry::phase("upload_buffer_read", async {
-                    compio::time::timeout(Duration::from_secs(config.process_timeout_secs),
-                        upload::load(opened, size, config.max_upload_bytes))
-                        .await.map_err(|_| Error::Timeout)?
-                }).await?;
+                    compio::time::timeout(
+                        Duration::from_secs(config.process_timeout_secs),
+                        upload::load(opened, size, config.max_upload_bytes),
+                    )
+                    .await
+                    .map_err(|_| Error::Timeout)?
+                })
+                .await?;
                 tracing::info!(
-            stage = "upload_buffer",
-            backing = "memory",
-            buffer_bytes = bytes.len(),
-            "Loaded active queued output"
+                    stage = "upload_buffer",
+                    backing = "memory",
+                    buffer_bytes = bytes.len(),
+                    "Loaded active queued output"
                 );
                 let diagnostics = Upload::new(size);
                 let file = InputFile::read(upload::counted(
-            bytes,
-            feedback.clone(),
-            diagnostics.clone(),
-        ))
+                    bytes,
+                    feedback.clone(),
+                    diagnostics.clone(),
+                ))
                 .file_name(upload_name(&request.media.title, extension));
-                diagnostics.run(send_typed(
-                bot,
-                request.chat,
-                &request.format,
-                file,
-                &request.media.title,
-                )).await.map_err(|_| Error::Telegram("media upload failed".into()))
+                diagnostics
+                    .run(send_typed(
+                        bot,
+                        request.chat,
+                        &request.format,
+                        file,
+                        &request.media.title,
+                    ))
+                    .await
+                    .map_err(|_| Error::Telegram("media upload failed".into()))
             },
         )
         .await?;
