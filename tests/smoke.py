@@ -691,7 +691,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     wait('sendmessage', lambda p: p.get('text') == 'Image received…')
                     wait('editmessagetext', lambda p: p.get('text') == 'Searching…')
                     preview = menu()
-                    assert preview[1]['text'].startswith('Artist: Forhill & Unfound\nTitle: Atlas\n')
+                    assert preview[1]['text'].startswith('Forhill & Unfound - Atlas\n\n')
                     assert 'Unfound & Forhill - Atlas\nhttps://media.invalid/track2' in preview[1]['text']
                     assert json.loads((root/'calls.jsonl').read_text().splitlines()[-1])[-1] == 'ytsearch5:"Forhill & Unfound" "Atlas"'
                     assert state['uploads'] == downloads() == 0, 'automatic lookup downloaded media'
@@ -701,7 +701,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     assert (root/'calls.jsonl').read_text() == before
                     press(preview, 'b')
                     results = menu()
-                    assert 'Title: Atlas' in results[1]['text']
+                    assert results[1]['text'].startswith('Forhill & Unfound - Atlas\n\n')
                     assert 'Search results' in results[1]['text']
                     press(results, 'q', 1)
                     suggested = menu()
@@ -720,7 +720,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     assert 'non-empty' in retry[1]['text']
                     correction('Forhill & Unfound', retry)
                     corrected = menu()
-                    assert 'Artist: Forhill & Unfound' in corrected[1]['text']
+                    assert corrected[1]['text'].startswith('Forhill & Unfound - Atlas\n\n')
                     correction('Replay', retry)
                     wait('sendmessage', lambda p: 'expired' in p.get('text',''))
                     press(corrected, 'e', 1)
@@ -729,13 +729,13 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     before = (root/'calls.jsonl').read_text()
                     correction('-Literal {artist} title', title_prompt)
                     final = menu()
-                    assert 'Title: -Literal {artist} title' in final[1]['text']
+                    assert final[1]['text'].startswith('Forhill & Unfound - -Literal {artist} title\n\n')
                     assert (root/'calls.jsonl').read_text() == before, 'field edit searched implicitly'
                     assert (root/'ocr-calls').read_text().splitlines() == ['good'], 'field edit repeated inference'
                     press(current, 'q')
                     wait('answercallbackquery', lambda p: 'expired' in p.get('text',''))
                     press(final, 'q')
-                    assert 'Title: -Literal {artist} title' in menu()[1]['text']
+                    assert menu()[1]['text'].startswith('Forhill & Unfound - -Literal {artist} title\n\n')
                     for name, expected in [('no-match','Search results'),('search-failed','The request failed')]:
                         photo(name=name)
                         fallback = menu()

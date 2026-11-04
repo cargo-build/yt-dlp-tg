@@ -175,7 +175,9 @@ operator outside the source repository.
   does not guarantee that every injection is recognized. Provider/quota/timeout
   and malformed-output errors are service failures, not evidence of unreadable
   images. Never silently use another backend on rejection/failure.
-  Keep fields visible in result/provider/format menus. Offer explicit plain and
+  Display recognized track identity as one `Artist - Title` line without field
+  labels in every interface language and result/provider/format menu. Keep artist
+  and title separate internally for matching and owned corrections. Offer explicit plain and
   phrase YouTube searches with a plain-language explanation, without the label
   "Quoted search". Owned, versioned replies correct one field and render
   the configured templates without inference or automatic search; foreign,

@@ -205,13 +205,7 @@ impl Session {
 
     fn context(&self, body: &str) -> String {
         match &self.track {
-            Some(track) => format!(
-                "{}: {}\n{}: {}\n\n{body}",
-                self.language.text(Text::Artist),
-                track.artist,
-                self.language.text(Text::Title),
-                track.title
-            ),
+            Some(track) => format!("{} - {}\n\n{body}", track.artist, track.title),
             None => body.to_owned(),
         }
     }
