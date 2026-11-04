@@ -15,8 +15,8 @@ Iggy queue. See [SPEC.md](SPEC.md) for the behavior contract.
 - M4A music copies the best available native AAC without re-encoding or bitrate
   presets. Sources without AAC offer an explicit Opus alternative. Opus voice copies
   native Opus or converts other codecs at high quality. Opus is lossy and uses
-  Telegram's voice player. Its selected-video thumbnail is embedded in the file
-  when available; Telegram may still show a waveform.
+  Telegram's voice player. Both audio choices embed the selected video's
+  thumbnail when available; Telegram may still show a waveform for Opus voice.
 - Video is delivered as streamable MP4 with H.264/yuv420p and AAC where present.
   Compatible streams are copied; incompatible SDR streams are converted on CPU
   under the existing download timeout and scratch limits. Conversion can increase

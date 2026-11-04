@@ -38,9 +38,10 @@ operator outside the source repository.
   video requests survive the policy upgrade and use the new MP4 pipeline.
   Show M4A music before the explicitly labeled Opus voice choice for both links
   and search results. Embed the selected video's thumbnail, when available, in
-  the Opus file without changing native Opus audio packets. No uploaded OCR image
-  becomes the cover. Version the covered Opus cache policy so old bare uploads
-  cannot hide the change. Embedded artwork does not turn a voice message into a
+  both Opus and native AAC/M4A files without changing native audio packets.
+  No uploaded OCR image becomes the cover. Version covered audio cache policies
+  so old bare uploads cannot hide the change; accepted prior native-AAC jobs
+  survive the artwork upgrade and use the covered pipeline. Embedded artwork does not turn a voice message into a
   Telegram music message.
 - DL-5: Video must not exceed 1080p. Reject formats with unknown height rather
   than bypassing the cap. Enforce the configured Telegram upload limit.

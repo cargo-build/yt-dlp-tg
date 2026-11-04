@@ -4,6 +4,7 @@
 import functools
 import ast
 import http.server
+import itertools
 import json
 from pathlib import Path
 import re
@@ -29,8 +30,9 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
 def main():
     source = (Path(__file__).resolve().parents[1] / 'src/media.rs').read_text()
     selectors = {kind: re.search(rf'const {kind}_SELECTOR: &str\s*=\s*r?"([^"]+)";', source)[1] for kind in ('AUDIO', 'MUSIC')}
-    opus_arguments = ast.literal_eval(re.search(r'Format::Opus => \{\s*command.args\((\[.*?\])\)', source, re.S)[1].replace('AUDIO_SELECTOR', repr(selectors['AUDIO'])))
-    music_arguments = ast.literal_eval(re.search(r'Format::M4a => \{\s*command.args\((\[.*?\])\)', source, re.S)[1].replace('MUSIC_SELECTOR', repr(selectors['MUSIC'])))
+    artwork_arguments = ast.literal_eval(re.search(r'const AUDIO_ARTWORK_ARGUMENTS:[^=]+?=\s*(\[.*?\]);', source, re.S)[1])
+    opus_arguments = ast.literal_eval(re.search(r'Format::Opus => \{\s*command\s*.args\((\[.*?\])\)', source, re.S)[1].replace('AUDIO_SELECTOR', repr(selectors['AUDIO']))) + artwork_arguments
+    music_arguments = ast.literal_eval(re.search(r'Format::M4a => \{\s*command\s*.args\((\[.*?\])\)', source, re.S)[1].replace('MUSIC_SELECTOR', repr(selectors['MUSIC']))) + artwork_arguments
     with tempfile.TemporaryDirectory(prefix='yt-dlp-tg-codecs-') as scratch:
         root = Path(scratch)
         opus = root / 'source.opus'
@@ -76,21 +78,33 @@ def main():
                     assert embedded == cover.read_bytes(), 'embedded image differs from the selected thumbnail'
                 assert list(directory.iterdir()) == [path], 'thumbnail sidecars were retained'
 
-            for label, filename, formats, expected in [
+            for thumbnail, (label, filename, formats, expected) in itertools.product((None, 'cover.jpg', 'cover.webp'), [
                 ('aac-copy', combined.name, [{'format_id':'combined','url':f'{base}/{combined.name}','ext':'mp4','vcodec':'avc1','acodec':'mp4a.40.2'}], combined),
                 ('best-native-aac', aac.name, [
                     {'format_id':'low','url':f'{base}/{aac.name}','ext':'m4a','vcodec':'none','acodec':'mp4a.40.2','abr':128,'tbr':128},
                     {'format_id':'high','url':f'{base}/{best_aac.name}','ext':'m4a','vcodec':'none','acodec':'aac','abr':256,'tbr':256}],best_aac),
-            ]:
-                directory = root / label
+            ]):
+                directory = root / (label + '-' + (thumbnail or 'bare'))
                 directory.mkdir()
                 metadata = {'id':'fixture','title':'Native AAC','extractor':'generic','webpage_url':f'{base}/{filename}','formats':formats}
+                if thumbnail:
+                    metadata['thumbnails'] = [{'url':f'{base}/{thumbnail}'}]
                 output = run([*common,*music_arguments,'--load-info-json','-','-P',str(directory),'-o','media.%(ext)s','--print','after_move:%(filepath)j'],json.dumps(metadata).encode())
                 path = Path(json.loads(output))
                 codec = json.loads(run(['ffprobe', '-v', 'error', '-show_streams', '-of', 'json', str(path)]))['streams'][0]['codec_name']
                 assert codec == 'aac' and path.suffix == '.m4a'
                 run(['ffmpeg', '-v', 'error', '-i', str(path), '-f', 'null', '-'])
                 assert packet_hashes(expected) == packet_hashes(path), 'native AAC packets or selected source changed'
+                info = json.loads(run(['ffprobe', '-v', 'error', '-show_streams', '-show_format', '-of', 'json', str(path)]))
+                pictures = [stream for stream in info['streams'] if stream.get('disposition', {}).get('attached_pic')]
+                assert len(pictures) == int(thumbnail is not None), 'native AAC artwork presence differs from the source'
+                if thumbnail:
+                    assert pictures[0]['codec_name'] == 'mjpeg' and pictures[0]['width'] == 32 and pictures[0]['height'] == 32
+                    assert info['format']['tags']['title'] == 'Native AAC', 'native AAC title metadata missing'
+                    if thumbnail.endswith('.jpg'):
+                        embedded = run(['ffmpeg', '-v', 'error', '-i', str(path), '-map', '0:v:0', '-c:v', 'copy', '-frames:v', '1', '-f', 'image2pipe', '-'])
+                        assert embedded == cover.read_bytes(), 'native AAC image differs from selected thumbnail'
+                assert list(directory.iterdir()) == [path], 'native AAC thumbnail sidecars were retained'
 
             directory=root/'reject-opus-for-aac'
             directory.mkdir()
@@ -114,7 +128,7 @@ def main():
             assert status == 0 and selected == 'best', 'reserved format ID was interpreted as a selector alias'
             status, selected = select_formats([video('combined_aac', 720)], selectors['AUDIO'])
             assert status == 0 and selected == 'combined_aac'
-            print('real yt-dlp/FFmpeg: JPEG/WebP covers embedded with unchanged Opus packets and no sidecars; native AAC packet copy/ranking, non-AAC rejection and pinned resolution selectors passed')
+            print('real yt-dlp/FFmpeg: JPEG/WebP covers embedded in Opus and native AAC with unchanged audio packets and no sidecars; missing-thumbnail AAC, source ranking, non-AAC rejection and pinned resolution selectors passed')
         finally:
             server.shutdown()
 

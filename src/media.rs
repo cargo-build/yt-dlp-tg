@@ -27,6 +27,12 @@ const MAX_STDOUT_BYTES: usize = 16 * 1024 * 1024;
 const AUDIO_SELECTOR: &str = "bestaudio[acodec=opus]/best[acodec=opus]/bestaudio/best";
 const MUSIC_SELECTOR: &str =
     r"bestaudio[acodec~='^(aac|mp4a\.40\..+)$']/best[acodec~='^(aac|mp4a\.40\..+)$']";
+const AUDIO_ARTWORK_ARGUMENTS: [&str; 4] = [
+    "--embed-thumbnail",
+    "--convert-thumbnails",
+    "jpg",
+    "--embed-metadata",
+];
 
 /// An installed extractor with an explicit text-search prefix. @req DL-2
 #[derive(Debug, Clone)]
@@ -539,30 +545,30 @@ fn download_arguments(
         .args(["--output", "media.%(ext)s"]);
     match format {
         Format::Opus => {
-            command.args([
-                "--format",
-                AUDIO_SELECTOR,
-                "--extract-audio",
-                "--audio-format",
-                "opus",
-                "--audio-quality",
-                "0",
-                "--embed-thumbnail",
-                "--convert-thumbnails",
-                "jpg",
-                "--embed-metadata",
-            ]);
+            command
+                .args([
+                    "--format",
+                    AUDIO_SELECTOR,
+                    "--extract-audio",
+                    "--audio-format",
+                    "opus",
+                    "--audio-quality",
+                    "0",
+                ])
+                .args(AUDIO_ARTWORK_ARGUMENTS);
         }
         Format::M4a => {
-            command.args([
-                "--format",
-                MUSIC_SELECTOR,
-                "--extract-audio",
-                "--audio-format",
-                "best",
-                "--remux-video",
-                "m4a",
-            ]);
+            command
+                .args([
+                    "--format",
+                    MUSIC_SELECTOR,
+                    "--extract-audio",
+                    "--audio-format",
+                    "best",
+                    "--remux-video",
+                    "m4a",
+                ])
+                .args(AUDIO_ARTWORK_ARGUMENTS);
         }
         Format::Video { selection, .. } => {
             command.args([

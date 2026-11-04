@@ -18,6 +18,13 @@ support, Deno and matching yt-dlp/EJS dependencies. Qualify actual MP4 conversio
 on the target before cutover. Optional image input
 also needs Pillow and the configured backend's pinned dependencies.
 
+Audio artwork uses yt-dlp's Mutagen support and FFmpeg thumbnail conversion.
+Run `python3 tests/media_smoke.py` with the deployed yt-dlp/FFmpeg tools: JPEG
+and WebP source thumbnails must be embedded in native AAC/M4A and Opus without
+changing copied audio packets or leaving image sidecars. A source without a
+thumbnail still produces audio. The covered AAC cache policy avoids older bare
+file IDs while retaining accepted `music-native-aac-v2` jobs for execution.
+
 For transfer diagnostics keep the normal `RUST_LOG=yt_dlp_tg=info` filter;
 generic HTTP debug/trace logs can expose token-bearing URLs. Run the standard
 mock workflow plus `tests/smoke.py <binary> --progress-only` on the target before

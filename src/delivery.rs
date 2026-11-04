@@ -247,15 +247,19 @@ async fn tracked<F: Future>(
 pub(crate) fn variant(format: &Format) -> String {
     match format {
         Format::Opus => "voice-opus-cover-v2".into(),
-        Format::M4a => "music-native-aac-v2".into(),
+        Format::M4a => "music-native-aac-cover-v3".into(),
         Format::Video { height, .. } => format!("video-{height}p-mp4-v3"),
     }
 }
 
-/// Accepted pre-upgrade video jobs retain their recipient and selection. @req DL-9 DL-14
+/// Accepted prior jobs retain their recipient and use the current output pipeline. @req DL-4 DL-9 DL-14
 pub(crate) fn accepts_policy(policy: &str, format: &Format) -> bool {
     policy == variant(format)
-        || matches!(format, Format::Video { height, .. } if policy == format!("video-{height}p-v2"))
+        || match format {
+            Format::M4a => policy == "music-native-aac-v2",
+            Format::Video { height, .. } => policy == format!("video-{height}p-v2"),
+            Format::Opus => false,
+        }
 }
 
 fn matches_format(format: &Format, kind: &FileKind) -> bool {
@@ -398,7 +402,23 @@ mod tests {
         assert!(upload_kind(&video(720), Path::new("media.mkv")).is_err());
         assert!(!matches_format(&video(720), &FileKind::Document));
         assert_ne!(variant(&Format::Opus), "voice-opus-v1");
-        assert_eq!(variant(&Format::M4a), "music-native-aac-v2");
+        assert_eq!(variant(&Format::M4a), "music-native-aac-cover-v3");
+        assert_ne!(variant(&Format::M4a), "music-native-aac-v2");
+    }
+
+    #[test]
+    fn persisted_native_aac_jobs_upgrade_without_reusing_bare_audio_policy() {
+        let request: crate::jobs::Request = serde_json::from_value(serde_json::json!({
+            "bot_id":1000,"user_id":42,"chat_id":42,"status_message":10,"language":"en",
+            "media":{"title":"Fixture","url":"https://media.invalid/audio"},
+            "format":"M4a","policy":"music-native-aac-v2"
+        }))
+        .expect("deployed native AAC request remains decodable");
+        assert!(accepts_policy(&request.policy, &request.format));
+        assert!(accepts_policy(&variant(&request.format), &request.format));
+        assert_ne!(request.policy, variant(&request.format));
+        assert!(!accepts_policy("music-m4a-v1", &request.format));
+        assert!(!accepts_policy(&request.policy, &Format::Opus));
     }
 
     #[test]
