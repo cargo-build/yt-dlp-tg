@@ -576,11 +576,11 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     print(f'{mode}: transfer boundaries body_bytes=8388608 body_gap_max_ms={gap:.3f} after_body_ms={tail:.3f}; cached reuse performed no upload')
                     for url in ('opus-only','aac-mismatch'):
                         fallback = choose('https://media.invalid/'+url,'m')
-                        wait('sendvoice')
+                        wait('sendaudio')
                         wait('editmessagetext', lambda p: 'sent Opus instead' in p.get('text','') and p.get('message_id')==fallback[2]['message_id'])
                     cached_before = downloads()
                     repeat = choose('https://media.invalid/opus-only','m')
-                    wait('sendvoice')
+                    wait('sendaudio')
                     wait('editmessagetext', lambda p: 'sent Opus instead' in p.get('text','') and p.get('message_id')==repeat[2]['message_id'])
                     assert downloads() == cached_before, 'fallback cache was not reused'
                     process.send_signal(signal.SIGTERM); assert process.wait(timeout=10)==0
@@ -754,14 +754,14 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                         if action == 'v':
                             qualities = menu()
                             pick_video(qualities)
-                        delivered = wait('sendvoice' if action == 'a' else 'sendvideo')
+                        delivered = wait('sendaudio' if action == 'a' else 'sendvideo')
                         wait('editmessagetext', lambda p: p.get('text') == 'Sent.')
                         if action == 'a' and before_downloads:
                             assert downloads() == before_downloads, 'quick music did not reuse cache'
                         else:
                             assert downloads() == before_downloads+1
                             assert json.loads((root/'downloads.jsonl').read_text().splitlines()[-1])[-1] == 'https://media.invalid/track2'
-                        assert delivered[2].get('voice') or delivered[2].get('audio') or delivered[2].get('video')
+                        assert delivered[2].get('audio') or delivered[2].get('video')
                     press(quick, 'v' if action == 'v' else 'a')
                     wait('answercallbackquery', lambda p: 'expired' in p.get('text',''))
                     photo(name='good')
@@ -895,15 +895,15 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                 formats = menu()
                 press(formats, 'a')
                 wait('editmessagetext', lambda p: active(p, 'Downloading…'))
-                uploaded = wait('sendvoice')
+                uploaded = wait('sendaudio')
                 wait('editmessagetext', lambda p: p.get('text') == 'Sent.' and p.get('message_id') == formats[2]['message_id'])
                 assert b'.ogg"' in uploaded[3]
-                assert 'voice' in uploaded[2]
+                assert 'audio' in uploaded[2]
                 before = downloads()
                 choose('https://media.invalid/track6', 'a')
                 wait('editmessagetext', lambda p: active(p, 'Sending…'))
-                reused = wait('sendvoice')
-                assert reused[1]['voice'] == uploaded[2]['voice']['file_id']
+                reused = wait('sendaudio')
+                assert reused[1]['audio'] == uploaded[2]['audio']['file_id']
                 assert downloads() == before, 'cache hit downloaded audio again'
 
                 choose('https://media.invalid/music', 'm')
@@ -928,21 +928,21 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                 wait('editmessagetext', lambda p: active(p, 'Sending…'))
                 assert wait('sendaudio')[1]['audio'] == recovered[2]['audio']['file_id']
                 assert downloads() == before + 2, 'auth failure evicted a valid cached ID'
-                for audio_action, method in [('a','sendvoice'),('m','sendaudio')]:
+                for audio_action in ('a','m'):
                     combined = choose('https://media.invalid/combined-audio', audio_action)
-                    wait(method)
+                    wait('sendaudio')
                     wait('editmessagetext', lambda p: p.get('text') == 'Sent.' and p.get('message_id') == combined[2]['message_id'])
                     assert not list((root/'jobs').iterdir()), 'combined audio cleanup leaked files'
                 fallback_before = downloads()
                 for url in ('opus-only','aac-mismatch'):
                     fallback = choose('https://media.invalid/'+url, 'm')
-                    wait('sendvoice')
+                    wait('sendaudio')
                     wait('editmessagetext', lambda p: 'sent Opus instead' in p.get('text','') and p.get('message_id')==fallback[2]['message_id'])
                     assert not list((root/'jobs').iterdir()), 'fallback cleanup leaked files'
                 assert downloads() == fallback_before + 3, 'native-AAC fallback downloaded unexpected media'
                 cached_before = downloads()
                 repeat = choose('https://media.invalid/opus-only', 'm')
-                wait('sendvoice')
+                wait('sendaudio')
                 wait('editmessagetext', lambda p: 'sent Opus instead' in p.get('text','') and p.get('message_id')==repeat[2]['message_id'])
                 assert downloads() == cached_before, 'fallback cache was not reused'
                 message('https://media.invalid/direct')

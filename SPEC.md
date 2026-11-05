@@ -27,9 +27,8 @@ operator outside the source repository.
   from another codec.
   Version the native-AAC cache policy so earlier converted music cannot hide
   the change; preserve old state for rollback and pending accepted work.
-  Opus remains lossy. Use Telegram voice
-  and audio messages respectively, with a meaningful source title, rather than
-  document-only audio. Video delivery produces a real, streamable MP4 with
+  Opus remains lossy. Use Telegram audio messages with a meaningful source
+  title and performer rather than document-only audio. Video delivery produces a real, streamable MP4 with
   H.264/yuv420p video and AAC audio when audio is present. Copy compatible
   streams; convert incompatible SDR streams on CPU without changing the pinned
   source selection or raising its height. Do not send MKV as a video substitute.
@@ -37,9 +36,9 @@ operator outside the source repository.
   New video cache policies must not replay older document IDs; accepted queued
   video requests survive the policy upgrade and use the new MP4 pipeline.
   Offer Opus first as the primary music action for both links and search
-  results, and keep native AAC/M4A as the explicit music-player alternative.
-  Telegram plays Opus as a voice message while M4A opens in the music player.
-  When the user selects native AAC and the source has no AAC, deliver Opus in
+  results, and keep native AAC/M4A as the explicit alternative. Both choices
+  arrive as Telegram music messages: Opus keeps the OGG/Opus container while
+  M4A keeps native AAC. When the user selects native AAC and the source has no AAC, deliver Opus in
   the same request and state the substitution in the terminal status; neither a
   failure message nor a second button press is acceptable. Embed the selected
   video's thumbnail, when available, in both files without changing native

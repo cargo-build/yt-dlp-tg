@@ -13,12 +13,12 @@ Iggy queue. See [SPEC.md](SPEC.md) for the behavior contract.
   providers. Failed URL extraction falls back to search. Source/result menus
   have pagination; every result shows its source link.
 - Opus is the primary music action: it copies native Opus or converts other
-  codecs at high quality and plays as a Telegram voice message. M4A music copies
-  the best available native AAC without re-encoding or bitrate presets and opens
-  in the music player. Selecting M4A on a source without AAC delivers Opus in the
-  same request and states the substitution. Both audio choices embed the selected
-  video's thumbnail when available; Telegram may still show a waveform for Opus
-  voice.
+  codecs at high quality and arrives as a Telegram music message in the
+  OGG/Opus container. M4A music copies the best available native AAC without
+  re-encoding or bitrate presets. Selecting M4A on a source without AAC delivers
+  Opus in the same request and states the substitution. Both audio choices embed
+  the selected video's thumbnail when available. OGG/Opus playback depends on
+  the Telegram client; native AAC/M4A has the widest player support.
 - Video is delivered as streamable MP4 with H.264/yuv420p and AAC where present.
   Compatible streams are copied; incompatible SDR streams are converted on CPU
   under the existing download timeout and scratch limits. Conversion can increase

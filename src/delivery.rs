@@ -11,7 +11,7 @@ use futures_util::future::{Either, select};
 use teloxide::{
     Bot, RequestError,
     errors::ApiError,
-    payloads::{EditMessageTextSetters, SendAudioSetters, SendVideoSetters, SendVoiceSetters},
+    payloads::{EditMessageTextSetters, SendAudioSetters, SendVideoSetters},
     requests::Requester,
     types::{ChatId, FileId, InlineKeyboardMarkup, InputFile, Message, MessageId},
 };
@@ -279,7 +279,7 @@ async fn tracked<F: Future>(
 
 pub(crate) fn variant(format: &Format) -> String {
     match format {
-        Format::Opus => "voice-opus-cover-v2".into(),
+        Format::Opus => "music-opus-cover-v4".into(),
         Format::M4a => "music-native-aac-cover-v3".into(),
         Format::Video { height, .. } => format!("video-{height}p-mp4-v3"),
     }
@@ -291,22 +291,20 @@ pub(crate) fn accepts_policy(policy: &str, format: &Format) -> bool {
         || match format {
             Format::M4a => policy == "music-native-aac-v2",
             Format::Video { height, .. } => policy == format!("video-{height}p-v2"),
-            Format::Opus => false,
+            Format::Opus => policy == "voice-opus-cover-v2",
         }
 }
 
 fn matches_format(format: &Format, kind: &FileKind) -> bool {
     matches!(
         (format, kind),
-        (Format::Opus, FileKind::Voice)
-            | (Format::M4a, FileKind::Audio)
-            | (Format::Video { .. }, FileKind::Video)
+        (Format::Opus | Format::M4a, FileKind::Audio) | (Format::Video { .. }, FileKind::Video)
     )
 }
 
 fn upload_kind(format: &Format, path: &Path) -> Result<(FileKind, &'static str)> {
     match (format, path.extension().and_then(|ext| ext.to_str())) {
-        (Format::Opus, Some("opus")) => Ok((FileKind::Voice, "ogg")),
+        (Format::Opus, Some("opus")) => Ok((FileKind::Audio, "ogg")),
         (Format::M4a, Some("m4a")) => Ok((FileKind::Audio, "m4a")),
         (Format::Video { .. }, Some("mp4")) => Ok((FileKind::Video, "mp4")),
         _ => Err(Error::YtDlp(
@@ -336,8 +334,7 @@ async fn send_typed(
 ) -> std::result::Result<Message, RequestError> {
     let title: String = title.chars().take(200).collect();
     match format {
-        Format::Opus => bot.send_voice(chat, file).caption(title).await,
-        Format::M4a => {
+        Format::Opus | Format::M4a => {
             bot.send_audio(chat, file)
                 .title(title.clone())
                 .caption(title)
@@ -393,7 +390,7 @@ mod tests {
     fn media_type_and_filename_preserve_playback_contract() {
         assert_eq!(
             upload_kind(&Format::Opus, Path::new("media.opus")).expect("Opus is Ogg"),
-            (FileKind::Voice, "ogg")
+            (FileKind::Audio, "ogg")
         );
         assert_eq!(
             upload_kind(&Format::M4a, Path::new("media.m4a")).expect("M4A is music"),
@@ -434,7 +431,9 @@ mod tests {
         assert_eq!(variant(&video(720)), "video-720p-mp4-v3");
         assert!(upload_kind(&video(720), Path::new("media.mkv")).is_err());
         assert!(!matches_format(&video(720), &FileKind::Document));
-        assert_ne!(variant(&Format::Opus), "voice-opus-v1");
+        assert_eq!(variant(&Format::Opus), "music-opus-cover-v4");
+        assert!(accepts_policy("voice-opus-cover-v2", &Format::Opus));
+        assert!(matches_format(&Format::Opus, &FileKind::Audio));
         assert_eq!(variant(&Format::M4a), "music-native-aac-cover-v3");
         assert_ne!(variant(&Format::M4a), "music-native-aac-v2");
     }
