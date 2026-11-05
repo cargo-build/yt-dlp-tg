@@ -36,85 +36,61 @@ pub struct Request<'a> {
     pub language: Language,
 }
 
+/// The format actually delivered, after any native-AAC fallback. @req DL-4
+pub struct Delivered {
+    pub format: Format,
+}
+
 pub async fn deliver(
     bot: &Bot,
     cache: &Cache,
     config: &Config,
     request: Request<'_>,
-) -> Result<()> {
-    let key = Key {
-        bot_id: request.bot_id,
-        source: request.media.url.clone(),
-        variant: variant(&request.format),
-    };
-    if let Some(cached) = telemetry::phase("cache_lookup", cache.get(key.clone())).await? {
-        if !matches_format(&request.format, &cached.kind) {
-            return Err(Error::Cache(
-                "cached media type does not match requested output".into(),
-            ));
-        }
-        let feedback = Progress::cached();
-        let report = telemetry::Phase::start("cached_send");
-        let reused = tracked(
-            bot,
-            request.chat,
-            request.status,
-            request.language,
-            &feedback,
-            send_typed(
-                bot,
-                request.chat,
-                &request.format,
-                InputFile::file_id(FileId(cached.file_id)),
-                &request.media.title,
-            ),
-        )
-        .await;
-        report.finish(reused.is_ok());
-        match reused {
-            Ok(_) => {
-                tracing::info!(kind = ?cached.kind, "Reused Telegram media");
-                return Ok(());
-            }
-            Err(error) if invalid_file_id(&error) => {
-                cache.remove(key.clone()).await?;
-                tracing::info!("Telegram rejected a cached file ID; retrying one cold delivery");
-            }
-            Err(_) => return Err(Error::Telegram("cached media send failed".into())),
-        }
+) -> Result<Delivered> {
+    if cached_send(bot, cache, &request, &request.format).await? {
+        return Ok(Delivered {
+            format: request.format.clone(),
+        });
     }
     let total = match &request.format {
         Format::Video { selection, .. } => Some(selection.size),
         Format::Opus | Format::M4a => None,
     };
     let feedback = Progress::new(total);
+    progress(
+        bot,
+        request.chat,
+        request.status,
+        request.language,
+        Text::Checking,
+    )
+    .await;
+    let inspected = media::inspect(config, &request.media.url).await?;
+    let format = media::delivered_format(&request.format, inspected.native_aac);
+    if format != request.format && cached_send(bot, cache, &request, &format).await? {
+        return Ok(Delivered { format });
+    }
     let directory = config
         .download_dir
         .join(format!("job-{:016x}", rand::random::<u64>()));
     let result = async {
         compio::fs::create_dir_all(&config.download_dir).await?;
         compio::fs::create_dir(&directory).await?;
-        let path = tracked(
+        let downloaded = tracked(
             bot,
             request.chat,
             request.status,
             request.language,
             &feedback,
-            media::download(
-                config,
-                request.media,
-                &request.format,
-                &directory,
-                &feedback,
-            ),
+            media::download(config, &format, &inspected, &directory, &feedback),
         )
         .await?;
         feedback.download_finished();
-        let size = compio::fs::metadata(&path).await?.len();
+        let size = compio::fs::metadata(&downloaded.path).await?.len();
         if size > config.max_upload_bytes {
             return Err(Error::TooLarge);
         }
-        let (kind, extension) = upload_kind(&request.format, &path)?;
+        let (kind, extension) = upload_kind(&downloaded.format, &downloaded.path)?;
         feedback.sending(Some(size));
         let sent = tracked(
             bot,
@@ -124,7 +100,7 @@ pub async fn deliver(
             &feedback,
             async {
                 let opened = telemetry::phase("file_open", async {
-                    Ok(compio::fs::File::open(&path).await?)
+                    Ok(compio::fs::File::open(&downloaded.path).await?)
                 })
                 .await?;
                 let bytes = telemetry::phase("upload_buffer_read", async {
@@ -153,7 +129,7 @@ pub async fn deliver(
                     .run(send_typed(
                         bot,
                         request.chat,
-                        &request.format,
+                        &downloaded.format,
                         file,
                         &request.media.title,
                     ))
@@ -164,9 +140,14 @@ pub async fn deliver(
         .await?;
         let cached = response_file(&sent, kind)?;
         let kind = cached.kind.clone();
+        let key = Key {
+            bot_id: request.bot_id,
+            source: request.media.url.clone(),
+            variant: variant(&downloaded.format),
+        };
         telemetry::phase("cache_write", cache.put(key, cached)).await?;
         tracing::info!(kind = ?kind, "Uploaded Telegram media and saved its reusable ID");
-        Ok(())
+        Ok(downloaded.format)
     }
     .await;
     match compio::runtime::spawn_blocking(move || std::fs::remove_dir_all(directory)).await {
@@ -174,7 +155,59 @@ pub async fn deliver(
         Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
         _ => tracing::warn!("Cannot remove download job directory"),
     }
-    result
+    result.map(|format| Delivered { format })
+}
+
+/// Deliver one typed cached file ID when it still matches the requested output. @req DL-4 DL-9
+async fn cached_send(
+    bot: &Bot,
+    cache: &Cache,
+    request: &Request<'_>,
+    format: &Format,
+) -> Result<bool> {
+    let key = Key {
+        bot_id: request.bot_id,
+        source: request.media.url.clone(),
+        variant: variant(format),
+    };
+    let Some(cached) = telemetry::phase("cache_lookup", cache.get(key.clone())).await? else {
+        return Ok(false);
+    };
+    if !matches_format(format, &cached.kind) {
+        return Err(Error::Cache(
+            "cached media type does not match requested output".into(),
+        ));
+    }
+    let feedback = Progress::cached();
+    let report = telemetry::Phase::start("cached_send");
+    let reused = tracked(
+        bot,
+        request.chat,
+        request.status,
+        request.language,
+        &feedback,
+        send_typed(
+            bot,
+            request.chat,
+            format,
+            InputFile::file_id(FileId(cached.file_id)),
+            &request.media.title,
+        ),
+    )
+    .await;
+    report.finish(reused.is_ok());
+    match reused {
+        Ok(_) => {
+            tracing::info!(kind = ?cached.kind, "Reused Telegram media");
+            Ok(true)
+        }
+        Err(error) if invalid_file_id(&error) => {
+            cache.remove(key).await?;
+            tracing::info!("Telegram rejected a cached file ID; retrying one cold delivery");
+            Ok(false)
+        }
+        Err(_) => Err(Error::Telegram("cached media send failed".into())),
+    }
 }
 
 /// Cosmetic UI failure must not retire an accepted media request. @req DL-11 DL-14

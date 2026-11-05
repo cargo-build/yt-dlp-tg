@@ -250,7 +250,7 @@ fn preview_menu(session: &Session) -> (String, InlineKeyboardMarkup) {
                 session.context(&body),
                 InlineKeyboardMarkup::new([
                     vec![
-                        session.button(session.language.text(Text::DownloadMusic), 'm', 0),
+                        session.button(session.language.text(Text::DownloadMusic), 'a', 0),
                         session.button(session.language.text(Text::DownloadVideo), 'v', 0),
                     ],
                     vec![
@@ -856,12 +856,18 @@ async fn callback(
     Ok(())
 }
 
+/// Native AAC was replaced by Opus for the same accepted request. @req DL-4
+fn native_aac_substitution(requested: &Format, delivered: &Format) -> bool {
+    matches!((requested, delivered), (Format::M4a, Format::Opus))
+}
+
 /// Recheck persisted recipient and output authority before sharing the media slot. @req DL-1 DL-14
 async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
     tracing::info!(stage = "delivery", outcome = "started",
         source = ?telemetry::source(&request.media.url), "Media request");
     let chat = ChatId(request.chat_id);
     let status = MessageId(request.status_message);
+    let requested = request.format.clone();
     let result = async {
         let bot_id = app.current_bot_id(bot).await?;
         if request.bot_id != bot_id
@@ -901,43 +907,17 @@ async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
         .await
     }
     .await;
-    if matches!(&result, Err(Error::AacUnavailable)) {
-        tracing::info!(stage = "delivery", outcome = "native_aac_unavailable",
-            source = ?telemetry::source(&request.media.url), "Media request");
-        let mut session = Session::new(
-            app,
-            UserId(request.user_id),
-            chat,
-            status,
-            request.language,
-            request.media.url.clone(),
-        );
-        session.selected = Some(request.media.clone().into());
-        let keyboard = InlineKeyboardMarkup::new([vec![session.button(
-            request.language.text(Text::Audio),
-            'a',
-            0,
-        )]]);
-        let body = format!(
-            "{}\n{}\n\n{}",
-            request.media.title.chars().take(240).collect::<String>(),
-            request.media.url,
-            request.language.text(Text::NativeAacUnavailable)
-        );
-        app.remember(session);
-        if bot
-            .edit_message_text(chat, status, body)
-            .reply_markup(keyboard)
-            .await
-            .is_err()
-        {
-            tracing::warn!("Cannot offer the Opus alternative");
-        }
-        return;
-    }
     match &result {
-        Ok(()) => {
+        Ok(delivered) if delivered.format == requested => {
             tracing::info!(stage = "delivery", outcome = "sent", "Media request")
+        }
+        Ok(delivered) if native_aac_substitution(&requested, &delivered.format) => {
+            tracing::info!(stage = "delivery", outcome = "native_aac_fallback",
+                format = ?delivered.format, "Media request")
+        }
+        Ok(delivered) => {
+            tracing::info!(stage = "delivery", outcome = "format_substituted",
+                format = ?delivered.format, "Media request")
         }
         Err(error) => {
             tracing::warn!(
@@ -949,9 +929,11 @@ async fn deliver_request(bot: &Bot, app: &App, request: jobs::Request) {
         }
     }
     let text = match result {
-        Ok(()) => Text::Sent,
+        Ok(delivered) if native_aac_substitution(&requested, &delivered.format) => {
+            Text::NativeAacFallback
+        }
+        Ok(_) => Text::Sent,
         Err(Error::TooLarge) => Text::TooLarge,
-        Err(Error::AacUnavailable) => Text::NativeAacUnavailable,
         Err(_) => Text::Failed,
     };
     delivery::progress(bot, chat, status, request.language, text).await;
@@ -1138,8 +1120,8 @@ fn format_menu(session: &Session) -> (String, InlineKeyboardMarkup) {
         session.context(&text),
         InlineKeyboardMarkup::new([
             vec![
-                session.button(session.language.text(Text::Music), 'm', 0),
-                session.button(session.language.text(Text::Audio), 'a', 0),
+                session.button(session.language.text(Text::OpusMusic), 'a', 0),
+                session.button(session.language.text(Text::NativeAacMusic), 'm', 0),
             ],
             vec![session.button(session.language.text(Text::Video), 'v', 0)],
             vec![session.button(session.language.text(Text::Back), 'b', 0)],

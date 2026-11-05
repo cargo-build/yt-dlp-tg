@@ -345,14 +345,42 @@ fn parse_search(output: &[u8]) -> Result<Vec<Media>> {
         .collect()
 }
 
+/// One source inspection shared by the format decision and the download. @req DL-4
+pub(crate) struct Inspected {
+    pub stream: Media,
+    pub native_aac: bool,
+}
+
+/// Validate one source once so the audio choice and download agree. @req DL-4
+pub(crate) async fn inspect(config: &Config, url: &str) -> Result<Inspected> {
+    let output = metadata(config, url).await?;
+    let stream = parse_probe(&output)?;
+    let native_aac = native_aac(&serde_json::from_slice(&output)?);
+    Ok(Inspected { stream, native_aac })
+}
+
+/// The downloaded output and the format actually produced. @req DL-4
+pub(crate) struct Downloaded {
+    pub path: PathBuf,
+    pub format: Format,
+}
+
+/// Resolve the delivered audio format before any download starts. @req DL-4
+pub(crate) fn delivered_format(format: &Format, native_aac: bool) -> Format {
+    match (format, native_aac) {
+        (Format::M4a, false) => Format::Opus,
+        (format, _) => format.clone(),
+    }
+}
+
 /// Download into an empty caller-owned job directory and validate the final file. @req DL-4 DL-5 DL-8
 pub(crate) async fn download(
     config: &Config,
-    media: &Media,
     format: &Format,
+    inspected: &Inspected,
     directory: &Path,
     feedback: &progress::Progress,
-) -> Result<PathBuf> {
+) -> Result<Downloaded> {
     if let Format::Video { height, selection } = format {
         if !(1..=video::MAX_HEIGHT).contains(height) {
             return Err(Error::YtDlp("invalid video height".into()));
@@ -361,6 +389,30 @@ pub(crate) async fn download(
             return Err(Error::TooLarge);
         }
     }
+    let format = delivered_format(format, inspected.native_aac);
+    let deadline = download_deadline(config.download_timeout_secs)?;
+    match download_once(config, &format, inspected, directory, deadline, feedback).await {
+        Err(Error::AacUnavailable) if matches!(format, Format::M4a) => {
+            let retry = directory.join("opus");
+            compio::fs::create_dir(&retry).await?;
+            download_once(config, &Format::Opus, inspected, &retry, deadline, feedback).await
+        }
+        result => result,
+    }
+}
+
+async fn download_once(
+    config: &Config,
+    format: &Format,
+    inspected: &Inspected,
+    directory: &Path,
+    deadline: Instant,
+    feedback: &progress::Progress,
+) -> Result<Downloaded> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(Error::Timeout);
+    }
     let root = config.download_dir.clone();
     let requested_directory = directory.to_owned();
     let directory =
@@ -368,13 +420,14 @@ pub(crate) async fn download(
             .await
             .map_err(|_| Error::YtDlp("download directory check failed".into()))??;
 
-    let metadata = metadata(config, &media.url).await?;
-    let source = parse_probe(&metadata)?;
-    if matches!(format, Format::M4a) && !native_aac(&serde_json::from_slice(&metadata)?) {
-        return Err(Error::AacUnavailable);
-    }
     let mut command = base_command(config);
-    download_arguments(&mut command, config, format, &directory, &source.url);
+    download_arguments(
+        &mut command,
+        config,
+        format,
+        &directory,
+        &inspected.stream.url,
+    );
     let total_bytes = config
         .max_upload_bytes
         .checked_mul(3)
@@ -383,13 +436,12 @@ pub(crate) async fn download(
         Format::Opus | Format::M4a => total_bytes,
         Format::Video { .. } => config.max_upload_bytes,
     };
-    let deadline = download_deadline(config.download_timeout_secs)?;
     let observe = |line: &[u8]| feedback.observe(line);
     let output = crate::telemetry::phase(
         "source_download",
         process::run_guarded(
             &mut command,
-            Duration::from_secs(config.download_timeout_secs),
+            remaining,
             MAX_STDOUT_BYTES,
             process::DirectoryLimit {
                 path: &directory,
@@ -423,13 +475,20 @@ pub(crate) async fn download(
     }
     if let Format::Video { height, .. } = format {
         feedback.preparing_video();
-        return crate::telemetry::phase(
+        let path = crate::telemetry::phase(
             "mp4_normalization",
             playable::ensure_playable(config, &directory, path, *height, deadline),
         )
-        .await;
+        .await?;
+        return Ok(Downloaded {
+            path,
+            format: format.clone(),
+        });
     }
-    Ok(path)
+    Ok(Downloaded {
+        path,
+        format: format.clone(),
+    })
 }
 
 fn download_deadline(seconds: u64) -> Result<Instant> {
@@ -854,6 +913,14 @@ mod tests {
             _ => None,
         })
         .expect("minimal test configuration is valid")
+    }
+
+    #[test]
+    fn native_aac_choice_falls_back_to_opus_only_without_source_aac() {
+        assert_eq!(delivered_format(&Format::M4a, false), Format::Opus);
+        assert_eq!(delivered_format(&Format::M4a, true), Format::M4a);
+        assert_eq!(delivered_format(&Format::Opus, false), Format::Opus);
+        assert_eq!(delivered_format(&Format::Opus, true), Format::Opus);
     }
 
     #[test]

@@ -20,11 +20,11 @@ operator outside the source repository.
 - DL-3: Search results expose titles and source links, pagination, result
   selection, and audio/video choices. Direct URLs expose the same format choice.
   Callback state must belong to the requesting user/chat/message and expire.
-- DL-4: Offer Opus voice playback and source-native AAC music in M4A. Preserve
+- DL-4: Offer Opus audio and source-native AAC music in M4A. Preserve
   existing Opus; convert other source codecs to high-quality Opus when needed.
   The AAC choice copies the best available source AAC without re-encoding or
-  bitrate presets; bitrate/channels depend on the source. Without usable AAC,
-  explain that Opus is the alternative. Never synthesize AAC from another codec.
+  bitrate presets; bitrate/channels depend on the source. Never synthesize AAC
+  from another codec.
   Version the native-AAC cache policy so earlier converted music cannot hide
   the change; preserve old state for rollback and pending accepted work.
   Opus remains lossy. Use Telegram voice
@@ -36,13 +36,17 @@ operator outside the source repository.
   Validate codecs, container, dimensions, final size and faststart before upload.
   New video cache policies must not replay older document IDs; accepted queued
   video requests survive the policy upgrade and use the new MP4 pipeline.
-  Show M4A music before the explicitly labeled Opus voice choice for both links
-  and search results. Embed the selected video's thumbnail, when available, in
-  both Opus and native AAC/M4A files without changing native audio packets.
-  No uploaded OCR image becomes the cover. Version covered audio cache policies
-  so old bare uploads cannot hide the change; accepted prior native-AAC jobs
-  survive the artwork upgrade and use the covered pipeline. Embedded artwork does not turn a voice message into a
-  Telegram music message.
+  Offer Opus first as the primary music action for both links and search
+  results, and keep native AAC/M4A as the explicit music-player alternative.
+  Telegram plays Opus as a voice message while M4A opens in the music player.
+  When the user selects native AAC and the source has no AAC, deliver Opus in
+  the same request and state the substitution in the terminal status; neither a
+  failure message nor a second button press is acceptable. Embed the selected
+  video's thumbnail, when available, in both files without changing native
+  audio packets. No uploaded OCR image becomes the cover. Version covered audio
+  cache policies so old bare uploads cannot hide the change; accepted prior
+  native-AAC jobs survive the artwork upgrade and use the covered pipeline.
+  Embedded artwork does not turn a voice message into a Telegram music message.
 - DL-5: Video must not exceed 1080p. Reject formats with unknown height rather
   than bypassing the cap. Enforce the configured Telegram upload limit.
   /start and /help explain the file/height/time limits and that a user's Premium

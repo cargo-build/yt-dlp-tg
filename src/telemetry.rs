@@ -129,6 +129,7 @@ pub fn reason(error: &Error) -> &'static str {
         Error::Json(_) => "invalid_metadata",
         Error::Timeout => "timeout",
         Error::TooLarge => "upload_limit",
+        // Consumed inside media::download, which retries as Opus before delivery.
         Error::AacUnavailable => "native_aac_unavailable",
         Error::Cache(_) => "cache",
         Error::Queue(_) => "queue",

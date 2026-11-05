@@ -575,16 +575,16 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     assert '1000:fixture' not in logged and str(root) not in logged
                     print(f'{mode}: transfer boundaries body_bytes=8388608 body_gap_max_ms={gap:.3f} after_body_ms={tail:.3f}; cached reuse performed no upload')
                     for url in ('opus-only','aac-mismatch'):
-                        choose('https://media.invalid/'+url,'m')
-                        alternative=menu()
-                        assert 'Native AAC is unavailable' in alternative[1]['text']
-                        press(alternative,'a',id=7)
-                        wait('answercallbackquery',lambda p:'expired' in p.get('text',''))
-                        press(alternative,'a')
+                        fallback = choose('https://media.invalid/'+url,'m')
                         wait('sendvoice')
-                        wait('editmessagetext',lambda p:p.get('text')=='Sent.')
+                        wait('editmessagetext', lambda p: 'sent Opus instead' in p.get('text','') and p.get('message_id')==fallback[2]['message_id'])
+                    cached_before = downloads()
+                    repeat = choose('https://media.invalid/opus-only','m')
+                    wait('sendvoice')
+                    wait('editmessagetext', lambda p: 'sent Opus instead' in p.get('text','') and p.get('message_id')==repeat[2]['message_id'])
+                    assert downloads() == cached_before, 'fallback cache was not reused'
                     process.send_signal(signal.SIGTERM); assert process.wait(timeout=10)==0
-                    print(f'{mode}: one-message measured progress and owned native-AAC/Opus fallback passed')
+                    print(f'{mode}: one-message measured progress and automatic native-AAC/Opus fallback passed')
                     return
                 if public_access:
                     message('/start', id=99, chat=99)
@@ -696,7 +696,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     assert json.loads((root/'calls.jsonl').read_text().splitlines()[-1])[-1] == 'ytsearch5:"Forhill & Unfound" "Atlas"'
                     assert state['uploads'] == downloads() == 0, 'automatic lookup downloaded media'
                     before = (root/'calls.jsonl').read_text()
-                    press(preview, 'm', id=7)
+                    press(preview, 'a', id=7)
                     wait('answercallbackquery', lambda p: 'expired' in p.get('text',''))
                     assert (root/'calls.jsonl').read_text() == before
                     press(preview, 'b')
@@ -746,7 +746,7 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     photo(name='rejected')
                     wait('editmessagetext', lambda p: p.get('text') == 'No track could be identified.')
                     assert (root/'calls.jsonl').read_text() == before, 'recognition rejection searched'
-                    for action in ('m','m','v'):
+                    for action in ('a','a','v'):
                         before_downloads = downloads()
                         photo(name='good')
                         quick = menu()
@@ -754,15 +754,15 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                         if action == 'v':
                             qualities = menu()
                             pick_video(qualities)
-                        delivered = wait('sendaudio' if action == 'm' else 'sendvideo')
+                        delivered = wait('sendvoice' if action == 'a' else 'sendvideo')
                         wait('editmessagetext', lambda p: p.get('text') == 'Sent.')
-                        if action == 'm' and before_downloads:
+                        if action == 'a' and before_downloads:
                             assert downloads() == before_downloads, 'quick music did not reuse cache'
                         else:
                             assert downloads() == before_downloads+1
                             assert json.loads((root/'downloads.jsonl').read_text().splitlines()[-1])[-1] == 'https://media.invalid/track2'
-                        assert delivered[2].get('audio') or delivered[2].get('video')
-                    press(quick, 'v' if action == 'v' else 'm')
+                        assert delivered[2].get('voice') or delivered[2].get('audio') or delivered[2].get('video')
+                    press(quick, 'v' if action == 'v' else 'a')
                     wait('answercallbackquery', lambda p: 'expired' in p.get('text',''))
                     photo(name='good')
                     quick = menu()
@@ -933,11 +933,23 @@ print(json.dumps({'kind':'track','artist':artist,'title':title,'plain_query':art
                     wait(method)
                     wait('editmessagetext', lambda p: p.get('text') == 'Sent.' and p.get('message_id') == combined[2]['message_id'])
                     assert not list((root/'jobs').iterdir()), 'combined audio cleanup leaked files'
+                fallback_before = downloads()
+                for url in ('opus-only','aac-mismatch'):
+                    fallback = choose('https://media.invalid/'+url, 'm')
+                    wait('sendvoice')
+                    wait('editmessagetext', lambda p: 'sent Opus instead' in p.get('text','') and p.get('message_id')==fallback[2]['message_id'])
+                    assert not list((root/'jobs').iterdir()), 'fallback cleanup leaked files'
+                assert downloads() == fallback_before + 3, 'native-AAC fallback downloaded unexpected media'
+                cached_before = downloads()
+                repeat = choose('https://media.invalid/opus-only', 'm')
+                wait('sendvoice')
+                wait('editmessagetext', lambda p: 'sent Opus instead' in p.get('text','') and p.get('message_id')==repeat[2]['message_id'])
+                assert downloads() == cached_before, 'fallback cache was not reused'
                 message('https://media.invalid/direct')
                 direct = menu()
                 assert 'Choose a format' in direct[1]['text']
                 audio_buttons = direct[1]['reply_markup']['inline_keyboard'][0]
-                assert 'AAC' in audio_buttons[0]['text'] and 'Opus' in audio_buttons[1]['text'], 'native music must precede voice'
+                assert 'Opus' in audio_buttons[0]['text'] and 'AAC' in audio_buttons[1]['text'], 'Opus music must precede native AAC'
                 press(direct, 'v')
                 qualities = menu()
                 assert any('1080p' in button['text'] and 'unavailable' in button['text'] and '>50' in button['text'] for row in qualities[1]['reply_markup']['inline_keyboard'] for button in row)

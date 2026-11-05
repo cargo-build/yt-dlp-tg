@@ -12,11 +12,13 @@ Iggy queue. See [SPEC.md](SPEC.md) for the behavior contract.
 - Send text to search YouTube, or a URL for extraction through installed yt-dlp
   providers. Failed URL extraction falls back to search. Source/result menus
   have pagination; every result shows its source link.
-- M4A music copies the best available native AAC without re-encoding or bitrate
-  presets. Sources without AAC offer an explicit Opus alternative. Opus voice copies
-  native Opus or converts other codecs at high quality. Opus is lossy and uses
-  Telegram's voice player. Both audio choices embed the selected video's
-  thumbnail when available; Telegram may still show a waveform for Opus voice.
+- Opus is the primary music action: it copies native Opus or converts other
+  codecs at high quality and plays as a Telegram voice message. M4A music copies
+  the best available native AAC without re-encoding or bitrate presets and opens
+  in the music player. Selecting M4A on a source without AAC delivers Opus in the
+  same request and states the substitution. Both audio choices embed the selected
+  video's thumbnail when available; Telegram may still show a waveform for Opus
+  voice.
 - Video is delivered as streamable MP4 with H.264/yuv420p and AAC where present.
   Compatible streams are copied; incompatible SDR streams are converted on CPU
   under the existing download timeout and scratch limits. Conversion can increase
