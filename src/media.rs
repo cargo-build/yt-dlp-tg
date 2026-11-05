@@ -27,6 +27,7 @@ const MAX_STDOUT_BYTES: usize = 16 * 1024 * 1024;
 const AUDIO_SELECTOR: &str = "bestaudio[acodec=opus]/best[acodec=opus]/bestaudio/best";
 const MUSIC_SELECTOR: &str =
     r"bestaudio[acodec~='^(aac|mp4a\.40\..+)$']/best[acodec~='^(aac|mp4a\.40\..+)$']";
+const MUSIC_SOURCE_SELECTOR: &str = "bestaudio/best";
 const AUDIO_ARTWORK_ARGUMENTS: [&str; 4] = [
     "--embed-thumbnail",
     "--convert-thumbnails",
@@ -345,39 +346,18 @@ fn parse_search(output: &[u8]) -> Result<Vec<Media>> {
         .collect()
 }
 
-/// One source inspection shared by the format decision and the download. @req DL-4
-pub(crate) struct Inspected {
-    pub stream: Media,
-    pub native_aac: bool,
-}
-
-/// Validate one source once so the audio choice and download agree. @req DL-4
-pub(crate) async fn inspect(config: &Config, url: &str) -> Result<Inspected> {
-    let output = metadata(config, url).await?;
-    let stream = parse_probe(&output)?;
-    let native_aac = native_aac(&serde_json::from_slice(&output)?);
-    Ok(Inspected { stream, native_aac })
-}
-
-/// The downloaded output and the format actually produced. @req DL-4
+/// The downloaded output, its effective format and whether music was converted. @req DL-4
 pub(crate) struct Downloaded {
     pub path: PathBuf,
     pub format: Format,
-}
-
-/// Resolve the delivered audio format before any download starts. @req DL-4
-pub(crate) fn delivered_format(format: &Format, native_aac: bool) -> Format {
-    match (format, native_aac) {
-        (Format::M4a, false) => Format::Opus,
-        (format, _) => format.clone(),
-    }
+    pub converted: bool,
 }
 
 /// Download into an empty caller-owned job directory and validate the final file. @req DL-4 DL-5 DL-8
 pub(crate) async fn download(
     config: &Config,
+    media: &Media,
     format: &Format,
-    inspected: &Inspected,
     directory: &Path,
     feedback: &progress::Progress,
 ) -> Result<Downloaded> {
@@ -389,13 +369,35 @@ pub(crate) async fn download(
             return Err(Error::TooLarge);
         }
     }
-    let format = delivered_format(format, inspected.native_aac);
+    let metadata = metadata(config, &media.url).await?;
+    let source = parse_probe(&metadata)?;
+    let native_aac = native_aac(&serde_json::from_slice(&metadata)?);
+    let converted = matches!(format, Format::M4a) && !native_aac;
     let deadline = download_deadline(config.download_timeout_secs)?;
-    match download_once(config, &format, inspected, directory, deadline, feedback).await {
-        Err(Error::AacUnavailable) if matches!(format, Format::M4a) => {
-            let retry = directory.join("opus");
+    match download_once(
+        config,
+        format,
+        converted,
+        &source.url,
+        directory,
+        deadline,
+        feedback,
+    )
+    .await
+    {
+        Err(Error::AacUnavailable) if matches!(format, Format::M4a) && !converted => {
+            let retry = directory.join("converted");
             compio::fs::create_dir(&retry).await?;
-            download_once(config, &Format::Opus, inspected, &retry, deadline, feedback).await
+            download_once(
+                config,
+                format,
+                true,
+                &source.url,
+                &retry,
+                deadline,
+                feedback,
+            )
+            .await
         }
         result => result,
     }
@@ -404,7 +406,8 @@ pub(crate) async fn download(
 async fn download_once(
     config: &Config,
     format: &Format,
-    inspected: &Inspected,
+    converted: bool,
+    source_url: &str,
     directory: &Path,
     deadline: Instant,
     feedback: &progress::Progress,
@@ -425,8 +428,9 @@ async fn download_once(
         &mut command,
         config,
         format,
+        converted,
         &directory,
-        &inspected.stream.url,
+        source_url,
     );
     let total_bytes = config
         .max_upload_bytes
@@ -483,11 +487,13 @@ async fn download_once(
         return Ok(Downloaded {
             path,
             format: format.clone(),
+            converted,
         });
     }
     Ok(Downloaded {
         path,
         format: format.clone(),
+        converted,
     })
 }
 
@@ -578,6 +584,7 @@ fn download_arguments(
     command: &mut Command,
     config: &Config,
     format: &Format,
+    converted: bool,
     directory: &Path,
     url: &str,
 ) {
@@ -613,6 +620,21 @@ fn download_arguments(
                     "opus",
                     "--audio-quality",
                     "0",
+                ])
+                .args(AUDIO_ARTWORK_ARGUMENTS);
+        }
+        Format::M4a if converted => {
+            command
+                .args([
+                    "--format",
+                    MUSIC_SOURCE_SELECTOR,
+                    "--extract-audio",
+                    "--audio-format",
+                    "aac",
+                    "--audio-quality",
+                    "0",
+                    "--remux-video",
+                    "m4a",
                 ])
                 .args(AUDIO_ARTWORK_ARGUMENTS);
         }
@@ -812,6 +834,7 @@ mod tests {
             &mut command,
             &config,
             &video,
+            false,
             Path::new("/tmp/job"),
             "https://example.com/video",
         );
@@ -916,11 +939,40 @@ mod tests {
     }
 
     #[test]
-    fn native_aac_choice_falls_back_to_opus_only_without_source_aac() {
-        assert_eq!(delivered_format(&Format::M4a, false), Format::Opus);
-        assert_eq!(delivered_format(&Format::M4a, true), Format::M4a);
-        assert_eq!(delivered_format(&Format::Opus, false), Format::Opus);
-        assert_eq!(delivered_format(&Format::Opus, true), Format::Opus);
+    fn native_aac_choice_converts_only_without_source_aac() {
+        let config = config();
+        let direct = Command::new("yt-dlp");
+        let mut direct = direct;
+        download_arguments(
+            &mut direct,
+            &config,
+            &Format::M4a,
+            false,
+            Path::new("/tmp"),
+            "https://example.com/video",
+        );
+        let direct: Vec<_> = direct
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(direct.contains(&MUSIC_SELECTOR.to_string()));
+        assert!(!direct.contains(&"aac".to_string()));
+
+        let mut converted = Command::new("yt-dlp");
+        download_arguments(
+            &mut converted,
+            &config,
+            &Format::M4a,
+            true,
+            Path::new("/tmp"),
+            "https://example.com/video",
+        );
+        let converted: Vec<_> = converted
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(converted.contains(&MUSIC_SOURCE_SELECTOR.to_string()));
+        assert!(converted.contains(&"aac".to_string()));
     }
 
     #[test]
@@ -945,6 +997,7 @@ mod tests {
             &mut command,
             &config,
             &Format::M4a,
+            false,
             Path::new("/tmp/job"),
             "https://media.invalid",
         );
@@ -1080,6 +1133,7 @@ mod tests {
             &mut command,
             &config,
             &Format::Opus,
+            false,
             Path::new("/tmp/job"),
             "https://example.com/?a=1&b=2",
         );

@@ -11,7 +11,7 @@ use futures_util::future::{Either, select};
 use teloxide::{
     Bot, RequestError,
     errors::ApiError,
-    payloads::{EditMessageTextSetters, SendAudioSetters, SendVideoSetters},
+    payloads::{EditMessageTextSetters, SendAudioSetters, SendVideoSetters, SendVoiceSetters},
     requests::Requester,
     types::{ChatId, FileId, InlineKeyboardMarkup, InputFile, Message, MessageId},
 };
@@ -36,9 +36,9 @@ pub struct Request<'a> {
     pub language: Language,
 }
 
-/// The format actually delivered, after any native-AAC fallback. @req DL-4
+/// Whether the delivered music needed AAC conversion. @req DL-4
 pub struct Delivered {
-    pub format: Format,
+    pub converted: bool,
 }
 
 pub async fn deliver(
@@ -48,9 +48,7 @@ pub async fn deliver(
     request: Request<'_>,
 ) -> Result<Delivered> {
     if cached_send(bot, cache, &request, &request.format).await? {
-        return Ok(Delivered {
-            format: request.format.clone(),
-        });
+        return Ok(Delivered { converted: false });
     }
     let total = match &request.format {
         Format::Video { selection, .. } => Some(selection.size),
@@ -65,11 +63,6 @@ pub async fn deliver(
         Text::Checking,
     )
     .await;
-    let inspected = media::inspect(config, &request.media.url).await?;
-    let format = media::delivered_format(&request.format, inspected.native_aac);
-    if format != request.format && cached_send(bot, cache, &request, &format).await? {
-        return Ok(Delivered { format });
-    }
     let directory = config
         .download_dir
         .join(format!("job-{:016x}", rand::random::<u64>()));
@@ -82,7 +75,13 @@ pub async fn deliver(
             request.status,
             request.language,
             &feedback,
-            media::download(config, &format, &inspected, &directory, &feedback),
+            media::download(
+                config,
+                request.media,
+                &request.format,
+                &directory,
+                &feedback,
+            ),
         )
         .await?;
         feedback.download_finished();
@@ -147,7 +146,7 @@ pub async fn deliver(
         };
         telemetry::phase("cache_write", cache.put(key, cached)).await?;
         tracing::info!(kind = ?kind, "Uploaded Telegram media and saved its reusable ID");
-        Ok(downloaded.format)
+        Ok((downloaded.format, downloaded.converted))
     }
     .await;
     match compio::runtime::spawn_blocking(move || std::fs::remove_dir_all(directory)).await {
@@ -155,7 +154,7 @@ pub async fn deliver(
         Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
         _ => tracing::warn!("Cannot remove download job directory"),
     }
-    result.map(|format| Delivered { format })
+    result.map(|(_, converted)| Delivered { converted })
 }
 
 /// Deliver one typed cached file ID when it still matches the requested output. @req DL-4 DL-9
@@ -279,8 +278,8 @@ async fn tracked<F: Future>(
 
 pub(crate) fn variant(format: &Format) -> String {
     match format {
-        Format::Opus => "music-opus-cover-v4".into(),
-        Format::M4a => "music-native-aac-cover-v3".into(),
+        Format::Opus => "voice-opus-cover-v2".into(),
+        Format::M4a => "music-m4a-cover-v4".into(),
         Format::Video { height, .. } => format!("video-{height}p-mp4-v3"),
     }
 }
@@ -289,22 +288,26 @@ pub(crate) fn variant(format: &Format) -> String {
 pub(crate) fn accepts_policy(policy: &str, format: &Format) -> bool {
     policy == variant(format)
         || match format {
-            Format::M4a => policy == "music-native-aac-v2",
+            Format::M4a => {
+                matches!(policy, "music-native-aac-cover-v3" | "music-native-aac-v2")
+            }
             Format::Video { height, .. } => policy == format!("video-{height}p-v2"),
-            Format::Opus => policy == "voice-opus-cover-v2",
+            Format::Opus => policy == "music-opus-cover-v4",
         }
 }
 
 fn matches_format(format: &Format, kind: &FileKind) -> bool {
     matches!(
         (format, kind),
-        (Format::Opus | Format::M4a, FileKind::Audio) | (Format::Video { .. }, FileKind::Video)
+        (Format::Opus, FileKind::Voice)
+            | (Format::M4a, FileKind::Audio)
+            | (Format::Video { .. }, FileKind::Video)
     )
 }
 
 fn upload_kind(format: &Format, path: &Path) -> Result<(FileKind, &'static str)> {
     match (format, path.extension().and_then(|ext| ext.to_str())) {
-        (Format::Opus, Some("opus")) => Ok((FileKind::Audio, "ogg")),
+        (Format::Opus, Some("opus")) => Ok((FileKind::Voice, "ogg")),
         (Format::M4a, Some("m4a")) => Ok((FileKind::Audio, "m4a")),
         (Format::Video { .. }, Some("mp4")) => Ok((FileKind::Video, "mp4")),
         _ => Err(Error::YtDlp(
@@ -334,7 +337,8 @@ async fn send_typed(
 ) -> std::result::Result<Message, RequestError> {
     let title: String = title.chars().take(200).collect();
     match format {
-        Format::Opus | Format::M4a => {
+        Format::Opus => bot.send_voice(chat, file).caption(title).await,
+        Format::M4a => {
             bot.send_audio(chat, file)
                 .title(title.clone())
                 .caption(title)
@@ -390,7 +394,7 @@ mod tests {
     fn media_type_and_filename_preserve_playback_contract() {
         assert_eq!(
             upload_kind(&Format::Opus, Path::new("media.opus")).expect("Opus is Ogg"),
-            (FileKind::Audio, "ogg")
+            (FileKind::Voice, "ogg")
         );
         assert_eq!(
             upload_kind(&Format::M4a, Path::new("media.m4a")).expect("M4A is music"),
@@ -431,10 +435,12 @@ mod tests {
         assert_eq!(variant(&video(720)), "video-720p-mp4-v3");
         assert!(upload_kind(&video(720), Path::new("media.mkv")).is_err());
         assert!(!matches_format(&video(720), &FileKind::Document));
-        assert_eq!(variant(&Format::Opus), "music-opus-cover-v4");
-        assert!(accepts_policy("voice-opus-cover-v2", &Format::Opus));
-        assert!(matches_format(&Format::Opus, &FileKind::Audio));
-        assert_eq!(variant(&Format::M4a), "music-native-aac-cover-v3");
+        assert_eq!(variant(&Format::Opus), "voice-opus-cover-v2");
+        assert!(accepts_policy("music-opus-cover-v4", &Format::Opus));
+        assert!(matches_format(&Format::Opus, &FileKind::Voice));
+        assert!(!matches_format(&Format::Opus, &FileKind::Audio));
+        assert_eq!(variant(&Format::M4a), "music-m4a-cover-v4");
+        assert!(accepts_policy("music-native-aac-cover-v3", &Format::M4a));
         assert_ne!(variant(&Format::M4a), "music-native-aac-v2");
     }
 

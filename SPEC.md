@@ -20,32 +20,30 @@ operator outside the source repository.
 - DL-3: Search results expose titles and source links, pagination, result
   selection, and audio/video choices. Direct URLs expose the same format choice.
   Callback state must belong to the requesting user/chat/message and expire.
-- DL-4: Offer Opus audio and source-native AAC music in M4A. Preserve
-  existing Opus; convert other source codecs to high-quality Opus when needed.
-  The AAC choice copies the best available source AAC without re-encoding or
-  bitrate presets; bitrate/channels depend on the source. Never synthesize AAC
-  from another codec.
-  Version the native-AAC cache policy so earlier converted music cannot hide
-  the change; preserve old state for rollback and pending accepted work.
-  Opus remains lossy. Use Telegram audio messages with a meaningful source
-  title and performer rather than document-only audio. Video delivery produces a real, streamable MP4 with
+- DL-4: Offer music as M4A first and Opus voice second for both links and
+  search results. Music copies the best available source AAC without
+  re-encoding or bitrate presets; bitrate/channels depend on the source. When
+  the source has no usable AAC, convert the best source audio to AAC in M4A and
+  state the conversion in the terminal status. Never send OGG/Opus as a music
+  message: Telegram stores that container as a voice note. Opus voice copies
+  native Opus or converts other codecs at high quality and is delivered as a
+  Telegram voice message. Never synthesize AAC while usable native AAC exists.
+  Version music cache policies so earlier outputs cannot hide the change;
+  preserve old state for rollback and pending accepted work.
+  Opus remains lossy. Use Telegram audio and voice messages with a meaningful
+  source title rather than document-only audio. Video delivery produces a real, streamable MP4 with
   H.264/yuv420p video and AAC audio when audio is present. Copy compatible
   streams; convert incompatible SDR streams on CPU without changing the pinned
   source selection or raising its height. Do not send MKV as a video substitute.
   Validate codecs, container, dimensions, final size and faststart before upload.
   New video cache policies must not replay older document IDs; accepted queued
   video requests survive the policy upgrade and use the new MP4 pipeline.
-  Offer Opus first as the primary music action for both links and search
-  results, and keep native AAC/M4A as the explicit alternative. Both choices
-  arrive as Telegram music messages: Opus keeps the OGG/Opus container while
-  M4A keeps native AAC. When the user selects native AAC and the source has no AAC, deliver Opus in
-  the same request and state the substitution in the terminal status; neither a
-  failure message nor a second button press is acceptable. Embed the selected
-  video's thumbnail, when available, in both files without changing native
-  audio packets. No uploaded OCR image becomes the cover. Version covered audio
-  cache policies so old bare uploads cannot hide the change; accepted prior
-  native-AAC jobs survive the artwork upgrade and use the covered pipeline.
-  Embedded artwork does not turn a voice message into a Telegram music message.
+  Embed the selected video's thumbnail, when available, in both audio files
+  without changing native audio packets. No uploaded OCR image becomes the
+  cover. Version covered audio cache policies so old bare uploads cannot hide
+  the change; accepted prior native-AAC jobs survive the artwork upgrade and
+  use the covered pipeline. Embedded artwork does not turn a voice message into
+  a Telegram music message.
 - DL-5: Video must not exceed 1080p. Reject formats with unknown height rather
   than bypassing the cap. Enforce the configured Telegram upload limit.
   /start and /help explain the file/height/time limits and that a user's Premium

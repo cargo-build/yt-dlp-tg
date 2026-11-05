@@ -135,8 +135,8 @@ fn source(session: &Session, body: &str) -> String {
 
 fn audio_row(session: &Session) -> Vec<InlineKeyboardButton> {
     vec![
-        session.button(session.language.text(Text::OpusMusic), 'a', 0),
-        session.button(session.language.text(Text::NativeAacMusic), 'm', 0),
+        session.button(session.language.text(Text::MusicM4a), 'm', 0),
+        session.button(session.language.text(Text::OpusVoice), 'a', 0),
     ]
 }
 
